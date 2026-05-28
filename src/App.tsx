@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 const SB_URL = "https://xhbalviwelidonrkoeim.supabase.co";
 const SB_KEY = "sb_publishable_uOQhqR6A2aH01mvqw8fswA_7ZWvx5Av";
 const ROW_ID = 1;
+const BUCKET = "projetos";
 
 async function sbGet() {
   const r = await fetch(`${SB_URL}/rest/v1/obras?id=eq.${ROW_ID}&select=dados`, {
@@ -34,6 +35,23 @@ async function sbSet(obras: any[]) {
     },
     body
   });
+}
+
+async function uploadPDF(file: File, obraId: string, discId: string): Promise<string> {
+  const ext = file.name.split(".").pop();
+  const path = `${obraId}/${discId}-${Date.now()}.${ext}`;
+  const r = await fetch(`${SB_URL}/storage/v1/object/${BUCKET}/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: SB_KEY,
+      Authorization: `Bearer ${SB_KEY}`,
+      "Content-Type": file.type,
+      "x-upsert": "true"
+    },
+    body: file
+  });
+  if (!r.ok) throw new Error("Erro no upload");
+  return `${SB_URL}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
 // ── Constants ────────────────────────────────────────────────
@@ -207,16 +225,26 @@ export default function App() {
     });
   };
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [uploading, setUploading] = useState(false);
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if(!file||!activeUpload||!obraId) return;
-    const url = URL.createObjectURL(file);
-    upd(prev => prev.map(o => o.id!==obraId ? o : {...o, disciplinas: o.disciplinas.map((d: any) => {
-      if(d.id!==activeUpload) return d;
-      const hist = d.pdfUrl ? [...(d.historico||[]),{pdfUrl:d.pdfUrl,pdfName:d.pdfName,updatedAt:d.updatedAt}] : (d.historico||[]);
-      return {...d, pdfUrl:url, pdfName:file.name, updatedAt:new Date().toLocaleString("pt-BR"), historico:hist};
-    })}));
-    setActiveUpload(null); e.target.value="";
+    setUploading(true);
+    try {
+      const url = await uploadPDF(file, obraId, activeUpload);
+      upd(prev => prev.map(o => o.id!==obraId ? o : {...o, disciplinas: o.disciplinas.map((d: any) => {
+        if(d.id!==activeUpload) return d;
+        const hist = d.pdfUrl ? [...(d.historico||[]),{pdfUrl:d.pdfUrl,pdfName:d.pdfName,updatedAt:d.updatedAt}] : (d.historico||[]);
+        return {...d, pdfUrl:url, pdfName:file.name, updatedAt:new Date().toLocaleString("pt-BR"), historico:hist};
+      })}));
+    } catch {
+      alert("Erro ao fazer upload. Tente novamente.");
+    } finally {
+      setUploading(false);
+      setActiveUpload(null);
+      e.target.value="";
+    }
   };
 
   const triggerUpload = (id: string) => { setActiveUpload(id); setTimeout(()=>fileRef.current?.click(),50); };
@@ -323,7 +351,9 @@ export default function App() {
                   </p>
                 </div>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                  <button style={s({fontSize:12,padding:"5px 12px"})} onClick={()=>triggerUpload(d.id)}>{d.pdfUrl?"Atualizar PDF":"Upload PDF"}</button>
+                  <button style={s({fontSize:12,padding:"5px 12px"})} onClick={()=>triggerUpload(d.id)} disabled={uploading}>
+                    {uploading && activeUpload===d.id ? "Enviando..." : d.pdfUrl?"Atualizar PDF":"Upload PDF"}
+                  </button>
                   <button style={s({fontSize:12,padding:"5px 12px"})} onClick={()=>setHistoricoDisc(d.id)}>Histórico</button>
                   <button style={s({fontSize:12,padding:"5px 12px"})} onClick={()=>setShowQR(showQR===d.id?null:d.id)}>QR Code</button>
                   <button style={s({fontSize:12,padding:"5px 10px",color:"red"})} onClick={()=>removeDisc(d.id)}>✕</button>
