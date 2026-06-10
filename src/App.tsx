@@ -5,6 +5,7 @@ const SB_URL = "https://xhbalviwelidonrkoeim.supabase.co";
 const SB_KEY = "sb_publishable_uOQhqR6A2aH01mvqw8fswA_7ZWvx5Av";
 const ROW_ID = 1;
 const BUCKET = "projetos";
+const APP_URL = "https://voaz-projetos.vercel.app";
 
 async function sbGet() {
   const r = await fetch(`${SB_URL}/rest/v1/obras?id=eq.${ROW_ID}&select=dados`, {
@@ -18,23 +19,10 @@ async function sbSet(obras: any[]) {
   const exists = await fetch(`${SB_URL}/rest/v1/obras?id=eq.${ROW_ID}&select=id`, {
     headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
   }).then(r => r.json());
-
   const body = JSON.stringify({ id: ROW_ID, dados: JSON.stringify(obras) });
   const method = exists?.length ? "PATCH" : "POST";
-  const url = exists?.length
-    ? `${SB_URL}/rest/v1/obras?id=eq.${ROW_ID}`
-    : `${SB_URL}/rest/v1/obras`;
-
-  await fetch(url, {
-    method,
-    headers: {
-      apikey: SB_KEY,
-      Authorization: `Bearer ${SB_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=minimal"
-    },
-    body
-  });
+  const url = exists?.length ? `${SB_URL}/rest/v1/obras?id=eq.${ROW_ID}` : `${SB_URL}/rest/v1/obras`;
+  await fetch(url, { method, headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" }, body });
 }
 
 async function uploadPDF(file: File, obraId: string, discId: string): Promise<string> {
@@ -42,25 +30,150 @@ async function uploadPDF(file: File, obraId: string, discId: string): Promise<st
   const path = `${obraId}/${discId}-${Date.now()}.${ext}`;
   const r = await fetch(`${SB_URL}/storage/v1/object/${BUCKET}/${path}`, {
     method: "POST",
-    headers: {
-      apikey: SB_KEY,
-      Authorization: `Bearer ${SB_KEY}`,
-      "Content-Type": file.type,
-      "x-upsert": "true"
-    },
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": file.type, "x-upsert": "true" },
     body: file
   });
   if (!r.ok) throw new Error("Erro no upload");
   return `${SB_URL}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
-// ── Constants ────────────────────────────────────────────────
-const PM_PASS = "PMVOAZ@2026";
-const COMPRAS_PASS = "COMPRASVOAZ@2026";
+// ── QR Code real via API ─────────────────────────────────────
+function QRCodeImg({ value, size = 140 }: { value: string; size?: number }) {
+  const url = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(value)}&margin=10`;
+  return <img src={url} width={size} height={size} style={{ display: "block", borderRadius: 6 }} alt="QR Code" />;
+}
+
+// ── Print QR Sheet ───────────────────────────────────────────
+function printQRSheet(obra: any, includeGeral = true) {
+  const size = 140;
+  const makeQR = (val: string) => `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(val)}&margin=10`;
+
+  const geralCard = includeGeral ? `
+    <div style="display:inline-flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border:2px solid #111;border-radius:8px;background:#fff;width:190px;box-sizing:border-box;">
+      <div style="font-size:28px;">🏢</div>
+      <img src="${makeQR(`${APP_URL}/?obra=${obra.id}`)}" width="${size}" height="${size}" style="border-radius:4px;"/>
+      <div style="text-align:center;">
+        <div style="font-weight:700;font-size:13px;color:#111;">TODAS AS DISCIPLINAS</div>
+        <div style="font-size:11px;color:#444;margin-top:2px;">${obra.nome}</div>
+        <div style="font-size:9px;color:#999;font-family:monospace;margin-top:2px;">QR Geral da Obra</div>
+      </div>
+    </div>` : "";
+
+  const cards = obra.disciplinas.map((d: any) => `
+    <div style="display:inline-flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border:1px solid #ddd;border-radius:8px;background:#fff;width:190px;box-sizing:border-box;">
+      <div style="font-size:28px;">${d.icone}</div>
+      <img src="${makeQR(`${APP_URL}/?obra=${obra.id}&disc=${d.id}`)}" width="${size}" height="${size}" style="border-radius:4px;"/>
+      <div style="text-align:center;">
+        <div style="font-weight:600;font-size:13px;color:#111;">${d.nome}</div>
+        <div style="font-size:10px;color:#666;margin-top:2px;">${obra.nome}</div>
+      </div>
+    </div>`).join("");
+
+  const html = `<!DOCTYPE html><html><head><title>QR Codes — ${obra.nome}</title>
+    <style>body{font-family:sans-serif;padding:24px;background:#f5f5f5;}h2{font-size:16px;color:#333;margin-bottom:16px;}.grid{display:flex;flex-wrap:wrap;gap:16px;}@media print{body{background:white;padding:12px;}@page{size:A4;margin:12mm;}}</style>
+    </head><body><h2>QR Codes — ${obra.nome}</h2><div class="grid">${geralCard}${cards}</div>
+    <script>
+      // wait for images to load before printing
+      window.onload = () => {
+        const imgs = document.querySelectorAll('img');
+        let loaded = 0;
+        imgs.forEach(img => {
+          if(img.complete) { loaded++; if(loaded===imgs.length) window.print(); }
+          else img.onload = () => { loaded++; if(loaded===imgs.length) window.print(); };
+        });
+        if(imgs.length===0) window.print();
+      };
+    <\/script></body></html>`;
+  const w = window.open("", "_blank")!;
+  w.document.write(html);
+  w.document.close();
+}
+
+// ── Deep link handler ────────────────────────────────────────
+function useDeepLink(obras: any[], setScreen: any, setObraId: any, setDiscId: any) {
+  useEffect(() => {
+    if (!obras.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const obraParam = params.get("obra");
+    const discParam = params.get("disc");
+    if (obraParam) {
+      const obra = obras.find((o: any) => o.id === obraParam);
+      if (obra) {
+        setObraId(obraParam);
+        if (discParam) {
+          const disc = obra.disciplinas.find((d: any) => d.id === discParam);
+          if (disc) { setDiscId(discParam); setScreen("disciplina"); }
+          else setScreen("obra");
+        } else {
+          setScreen("obra");
+        }
+      }
+    }
+  }, [obras]);
+}
+
+// ── Styles ───────────────────────────────────────────────────
+const s = (extra: any = {}) => ({ padding: "8px 16px", border: "0.5px solid #ccc", borderRadius: "8px", background: "transparent", cursor: "pointer", fontSize: 13, color: "#111", ...extra });
+const sp = (extra: any = {}) => ({ ...s(), background: "#111", color: "#fff", fontWeight: 500, border: "none", ...extra });
+
+function Modal({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+      <div style={{ background: "#fff", borderRadius: "12px", padding: "1.5rem", width: 340, border: "0.5px solid #ddd", maxHeight: "80vh", overflowY: "auto" }}>
+        <h3 style={{ margin: "0 0 1rem", fontWeight: 500, fontSize: 16 }}>{title}</h3>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function LoginModal({ title, onLogin, onClose }: { title: string; onLogin: (pw: string) => boolean; onClose: () => void }) {
+  const [pw, setPw] = useState(""), [err, setErr] = useState("");
+  const attempt = () => { if (!onLogin(pw)) setErr("Senha incorreta."); };
+  return (
+    <Modal title={title}>
+      <input type="password" placeholder="Senha" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === "Enter" && attempt()}
+        style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: "8px", border: "0.5px solid #ccc", fontSize: 14, marginBottom: 8 }} />
+      {err && <p style={{ margin: "0 0 8px", fontSize: 12, color: "red" }}>{err}</p>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button style={s()} onClick={onClose}>Cancelar</button>
+        <button style={sp()} onClick={attempt}>Entrar</button>
+      </div>
+    </Modal>
+  );
+}
+
+function HistoricoModal({ disc, onClose }: { disc: any; onClose: () => void }) {
+  return (
+    <Modal title={`Histórico — ${disc.nome}`}>
+      {disc.pdfUrl && (
+        <div style={{ marginBottom: 12, padding: "10px 12px", background: "#f5f5f5", borderRadius: "8px", border: "0.5px solid #ddd" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div><p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>Versão atual</p><p style={{ margin: 0, fontSize: 11, color: "#666" }}>{disc.pdfName} · {disc.updatedAt}</p></div>
+            <a href={disc.pdfUrl} target="_blank" rel="noreferrer" style={{ ...sp({ fontSize: 11, padding: "4px 10px", textDecoration: "none" }) }}>Ver</a>
+          </div>
+        </div>
+      )}
+      {(!disc.historico || disc.historico.length === 0)
+        ? <p style={{ fontSize: 13, color: "#666", margin: 0 }}>Nenhuma versão anterior.</p>
+        : [...disc.historico].reverse().map((v: any, i: number) => (
+          <div key={i} style={{ marginBottom: 8, padding: "8px 12px", border: "0.5px solid #ddd", borderRadius: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div><p style={{ margin: 0, fontSize: 12, fontWeight: 500, color: "#666" }}>Versão {disc.historico.length - i}</p><p style={{ margin: 0, fontSize: 11, color: "#999" }}>{v.pdfName} · {v.updatedAt}</p></div>
+              <a href={v.pdfUrl} target="_blank" rel="noreferrer" style={{ ...s({ fontSize: 11, padding: "4px 10px", textDecoration: "none" }) }}>Ver</a>
+            </div>
+          </div>
+        ))
+      }
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+        <button style={s()} onClick={onClose}>Fechar</button>
+      </div>
+    </Modal>
+  );
+}
 
 const defaultObras = [{
-  id: "demo-obra",
-  nome: "Obra Demo — Torre Jardins",
+  id: "demo-obra", nome: "Obra Demo — Torre Jardins",
   disciplinas: [
     { id: "estrutura", nome: "Estrutura", icone: "🏗️", pdfUrl: "", pdfName: "", updatedAt: null, historico: [] },
     { id: "eletrica", nome: "Elétrica", icone: "⚡", pdfUrl: "", pdfName: "", updatedAt: null, historico: [] },
@@ -69,321 +182,215 @@ const defaultObras = [{
   ]
 }];
 
-// ── QR Code ──────────────────────────────────────────────────
-function QRCodeSVG({ value, size = 140 }: { value: string; size?: number }) {
-  const M = 25, cell = size / M;
-  const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return Math.abs(h); };
-  const h = hash(value), cells: {r:number,c:number}[] = [];
-  for (let r = 0; r < M; r++) for (let c = 0; c < M; c++) {
-    const tl=r<7&&c<7, tr=r<7&&c>=M-7, bl=r>=M-7&&c<7;
-    const border=(tl&&(r===0||r===6||c===0||c===6))||(tr&&(r===0||r===6||c===M-7||c===M-1))||(bl&&(r===M-7||r===M-1||c===0||c===6));
-    const inner=(tl&&r>=2&&r<=4&&c>=2&&c<=4)||(tr&&r>=2&&r<=4&&c>=M-5&&c<=M-3)||(bl&&r>=M-5&&r<=M-3&&c>=2&&c<=4);
-    let dark=false;
-    if(border||inner) dark=true;
-    else if(!tl&&!tr&&!bl) dark=((h^(r*37+c*17+r*c))%3)!==0;
-    if(dark) cells.push({r,c});
-  }
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{display:"block",borderRadius:4}}>
-      <rect width={size} height={size} fill="white"/>
-      {cells.map(({r,c})=><rect key={`${r}-${c}`} x={c*cell} y={r*cell} width={cell} height={cell} fill="#111"/>)}
-    </svg>
-  );
-}
-
-function printQRSheet(obra: any) {
-  const qrSize = 140, M = 25, cell = qrSize / M;
-  const hash = (s: string) => { let h=0; for(let i=0;i<s.length;i++) h=((h<<5)-h+s.charCodeAt(i))|0; return Math.abs(h); };
-  const genCells = (val: string) => {
-    const h=hash(val), cells: {r:number,c:number}[] =[];
-    for(let r=0;r<M;r++) for(let c=0;c<M;c++){
-      const tl=r<7&&c<7,tr=r<7&&c>=M-7,bl=r>=M-7&&c<7;
-      const border=(tl&&(r===0||r===6||c===0||c===6))||(tr&&(r===0||r===6||c===M-7||c===M-1))||(bl&&(r===M-7||r===M-1||c===0||c===6));
-      const inner=(tl&&r>=2&&r<=4&&c>=2&&c<=4)||(tr&&r>=2&&r<=4&&c>=M-5&&c<=M-3)||(bl&&r>=M-5&&r<=M-3&&c>=2&&c<=4);
-      let dark=false;
-      if(border||inner) dark=true;
-      else if(!tl&&!tr&&!bl) dark=((h^(r*37+c*17+r*c))%3)!==0;
-      if(dark) cells.push({r,c});
-    }
-    return cells;
-  };
-  const cards = obra.disciplinas.map((d: any) => {
-    const val = `voaz/${obra.id}/${d.id}`;
-    const rects = genCells(val).map(({r,c})=>`<rect x="${c*cell}" y="${r*cell}" width="${cell}" height="${cell}" fill="#111"/>`).join("");
-    return `<div style="display:inline-flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border:1px solid #ddd;border-radius:8px;background:#fff;width:180px;box-sizing:border-box;">
-      <div style="font-size:28px;">${d.icone}</div>
-      <svg width="${qrSize}" height="${qrSize}" viewBox="0 0 ${qrSize} ${qrSize}"><rect width="${qrSize}" height="${qrSize}" fill="white"/>${rects}</svg>
-      <div style="text-align:center;">
-        <div style="font-weight:600;font-size:13px;color:#111;">${d.nome}</div>
-        <div style="font-size:10px;color:#666;margin-top:2px;">${obra.nome}</div>
-        <div style="font-size:9px;color:#999;font-family:monospace;margin-top:2px;">voaz/${obra.id}/${d.id}</div>
-      </div></div>`;
-  }).join("");
-  const html = `<!DOCTYPE html><html><head><title>QR Codes — ${obra.nome}</title>
-    <style>body{font-family:sans-serif;padding:24px;background:#f5f5f5;}h2{font-size:16px;color:#333;margin-bottom:16px;}.grid{display:flex;flex-wrap:wrap;gap:16px;}@media print{body{background:white;padding:12px;}@page{size:A4;margin:12mm;}}</style>
-    </head><body><h2>QR Codes — ${obra.nome}</h2><div class="grid">${cards}</div>
-    <script>window.onload=()=>window.print();<\/script></body></html>`;
-  const w = window.open("","_blank")!;
-  w.document.write(html); w.document.close();
-}
-
-// ── Styles ───────────────────────────────────────────────────
-const s = (extra={}) => ({padding:"8px 16px",border:"0.5px solid #ccc",borderRadius:"8px",background:"transparent",cursor:"pointer",fontSize:13,color:"#111",...extra});
-const sp = (extra={}) => ({...s(),background:"#111",color:"#fff",fontWeight:500,border:"none",...extra} as any);
-
-function Modal({ title, children }: { title: string; onClose?: ()=>void; children: React.ReactNode }) {
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
-      <div style={{background:"#fff",borderRadius:"12px",padding:"1.5rem",width:340,border:"0.5px solid #ddd",maxHeight:"80vh",overflowY:"auto"}}>
-        <h3 style={{margin:"0 0 1rem",fontWeight:500,fontSize:16}}>{title}</h3>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function LoginModal({ title, onLogin, onClose }: { title: string; onLogin: (pw: string)=>boolean; onClose: ()=>void }) {
-  const [pw,setPw]=useState(""), [err,setErr]=useState("");
-  const attempt = () => { if(!onLogin(pw)) setErr("Senha incorreta."); };
-  return (
-    <Modal title={title}>
-      <input type="password" placeholder="Senha" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&attempt()}
-        style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",borderRadius:"8px",border:"0.5px solid #ccc",fontSize:14,marginBottom:8}}/>
-      {err && <p style={{margin:"0 0 8px",fontSize:12,color:"red"}}>{err}</p>}
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-        <button style={s()} onClick={onClose}>Cancelar</button>
-        <button style={sp()} onClick={attempt}>Entrar</button>
-      </div>
-    </Modal>
-  );
-}
-
-function HistoricoModal({ disc, onClose }: { disc: any; onClose: ()=>void }) {
-  return (
-    <Modal title={`Histórico — ${disc.nome}`}>
-      {disc.pdfUrl && (
-        <div style={{marginBottom:12,padding:"10px 12px",background:"#f5f5f5",borderRadius:"8px",border:"0.5px solid #ddd"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><p style={{margin:0,fontSize:13,fontWeight:500}}>Versão atual</p><p style={{margin:0,fontSize:11,color:"#666"}}>{disc.pdfName} · {disc.updatedAt}</p></div>
-            <a href={disc.pdfUrl} target="_blank" rel="noreferrer" style={{...sp({fontSize:11,padding:"4px 10px",textDecoration:"none"})}}>Ver</a>
-          </div>
-        </div>
-      )}
-      {(!disc.historico||disc.historico.length===0)
-        ? <p style={{fontSize:13,color:"#666",margin:0}}>Nenhuma versão anterior.</p>
-        : [...disc.historico].reverse().map((v: any,i: number)=>(
-          <div key={i} style={{marginBottom:8,padding:"8px 12px",border:"0.5px solid #ddd",borderRadius:"8px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div><p style={{margin:0,fontSize:12,fontWeight:500,color:"#666"}}>Versão {disc.historico.length-i}</p><p style={{margin:0,fontSize:11,color:"#999"}}>{v.pdfName} · {v.updatedAt}</p></div>
-              <a href={v.pdfUrl} target="_blank" rel="noreferrer" style={{...s({fontSize:11,padding:"4px 10px",textDecoration:"none"})}}>Ver</a>
-            </div>
-          </div>
-        ))
-      }
-      <div style={{display:"flex",justifyContent:"flex-end",marginTop:12}}>
-        <button style={s()} onClick={onClose}>Fechar</button>
-      </div>
-    </Modal>
-  );
-}
-
-// ── Main App ─────────────────────────────────────────────────
 export default function App() {
   const [obras, setObras] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [screen, setScreen] = useState("home");
-  const [role, setRole] = useState<string|null>(null);
-  const [obraId, setObraId] = useState<string|null>(null);
-  const [discId, setDiscId] = useState<string|null>(null);
-  const [loginFor, setLoginFor] = useState<string|null>(null);
-  const [showQR, setShowQR] = useState<string|null>(null);
-  const [historicoDisc, setHistoricoDisc] = useState<string|null>(null);
+  const [role, setRole] = useState<string | null>(null);
+  const [obraId, setObraId] = useState<string | null>(null);
+  const [discId, setDiscId] = useState<string | null>(null);
+  const [loginFor, setLoginFor] = useState<string | null>(null);
+  const [showQR, setShowQR] = useState<string | null>(null);
+  const [showGeralQR, setShowGeralQR] = useState(false);
+  const [historicoDisc, setHistoricoDisc] = useState<string | null>(null);
   const [addDiscModal, setAddDiscModal] = useState(false);
   const [addObraModal, setAddObraModal] = useState(false);
   const [newNome, setNewNome] = useState(""), [newIcone, setNewIcone] = useState("📋");
   const [newObraNome, setNewObraNome] = useState("");
-  const [activeUpload, setActiveUpload] = useState<string|null>(null);
+  const [activeUpload, setActiveUpload] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const obra = obras.find(o => o.id === obraId);
 
   useEffect(() => {
-    sbGet().then(data => {
-      setObras(data || defaultObras);
-      setLoading(false);
-    }).catch(() => {
-      setObras(defaultObras);
-      setLoading(false);
-    });
+    sbGet().then(data => { setObras(data || defaultObras); setLoading(false); })
+      .catch(() => { setObras(defaultObras); setLoading(false); });
   }, []);
 
-  const upd = (fn: (prev: any[]) => any[]) => {
-    setObras(prev => {
-      const next = fn(prev);
-      sbSet(next).catch(console.error);
-      return next;
-    });
-  };
+  useDeepLink(obras, setScreen, setObraId, setDiscId);
 
-  const [uploading, setUploading] = useState(false);
+  const upd = (fn: (prev: any[]) => any[]) => setObras(prev => { const next = fn(prev); sbSet(next).catch(console.error); return next; });
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if(!file||!activeUpload||!obraId) return;
+    if (!file || !activeUpload || !obraId) return;
     setUploading(true);
     try {
       const url = await uploadPDF(file, obraId, activeUpload);
-      upd(prev => prev.map(o => o.id!==obraId ? o : {...o, disciplinas: o.disciplinas.map((d: any) => {
-        if(d.id!==activeUpload) return d;
-        const hist = d.pdfUrl ? [...(d.historico||[]),{pdfUrl:d.pdfUrl,pdfName:d.pdfName,updatedAt:d.updatedAt}] : (d.historico||[]);
-        return {...d, pdfUrl:url, pdfName:file.name, updatedAt:new Date().toLocaleString("pt-BR"), historico:hist};
-      })}));
-    } catch {
-      alert("Erro ao fazer upload. Tente novamente.");
-    } finally {
-      setUploading(false);
-      setActiveUpload(null);
-      e.target.value="";
-    }
+      upd(prev => prev.map(o => o.id !== obraId ? o : {
+        ...o, disciplinas: o.disciplinas.map((d: any) => {
+          if (d.id !== activeUpload) return d;
+          const hist = d.pdfUrl ? [...(d.historico || []), { pdfUrl: d.pdfUrl, pdfName: d.pdfName, updatedAt: d.updatedAt }] : (d.historico || []);
+          return { ...d, pdfUrl: url, pdfName: file.name, updatedAt: new Date().toLocaleString("pt-BR"), historico: hist };
+        })
+      }));
+    } catch { alert("Erro ao fazer upload. Tente novamente."); }
+    finally { setUploading(false); setActiveUpload(null); e.target.value = ""; }
   };
 
-  const triggerUpload = (id: string) => { setActiveUpload(id); setTimeout(()=>fileRef.current?.click(),50); };
-
+  const triggerUpload = (id: string) => { setActiveUpload(id); setTimeout(() => fileRef.current?.click(), 50); };
   const doLogin = (pw: string) => {
-    if(loginFor==="pm"&&pw===PM_PASS){ setRole("pm"); setLoginFor(null); setScreen(obraId?"pm":"home"); return true; }
-    if(loginFor==="compras"&&pw===COMPRAS_PASS){ setRole("compras"); setLoginFor(null); setScreen("compras"); return true; }
+    if (loginFor === "pm" && pw === "PMVOAZ@2026") { setRole("pm"); setLoginFor(null); setScreen(obraId ? "pm" : "home"); return true; }
+    if (loginFor === "compras" && pw === "COMPRASVOAZ@2026") { setRole("compras"); setLoginFor(null); setScreen("compras"); return true; }
     return false;
   };
-
-  const goHome = () => { setScreen("home"); setObraId(null); setDiscId(null); setRole(null); setShowQR(null); };
-  const goObra = (id: string) => { setObraId(id); setScreen("obra"); setShowQR(null); };
-
+  const goHome = () => { setScreen("home"); setObraId(null); setDiscId(null); setRole(null); setShowQR(null); setShowGeralQR(false); };
+  const goObra = (id: string) => { setObraId(id); setScreen("obra"); setShowQR(null); setShowGeralQR(false); };
   const addDisc = () => {
-    if(!newNome.trim()) return;
-    const id = newNome.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"")+"-"+Date.now();
-    upd(prev => prev.map(o => o.id!==obraId ? o : {...o, disciplinas:[...o.disciplinas,{id,nome:newNome,icone:newIcone,pdfUrl:"",pdfName:"",updatedAt:null,historico:[]}]}));
+    if (!newNome.trim()) return;
+    const id = newNome.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") + "-" + Date.now();
+    upd(prev => prev.map(o => o.id !== obraId ? o : { ...o, disciplinas: [...o.disciplinas, { id, nome: newNome, icone: newIcone, pdfUrl: "", pdfName: "", updatedAt: null, historico: [] }] }));
     setNewNome(""); setNewIcone("📋"); setAddDiscModal(false);
   };
-  const removeDisc = (id: string) => upd(prev => prev.map(o => o.id!==obraId ? o : {...o, disciplinas:o.disciplinas.filter((d:any)=>d.id!==id)}));
-  const addObra = () => { if(!newObraNome.trim()) return; upd(prev=>[...prev,{id:"obra-"+Date.now(),nome:newObraNome,disciplinas:[]}]); setNewObraNome(""); setAddObraModal(false); };
-  const removeObra = (id: string) => upd(prev=>prev.filter(o=>o.id!==id));
+  const removeDisc = (id: string) => upd(prev => prev.map(o => o.id !== obraId ? o : { ...o, disciplinas: o.disciplinas.filter((d: any) => d.id !== id) }));
+  const addObra = () => { if (!newObraNome.trim()) return; upd(prev => [...prev, { id: "obra-" + Date.now(), nome: newObraNome, disciplinas: [] }]); setNewObraNome(""); setAddObraModal(false); };
+  const removeObra = (id: string) => upd(prev => prev.filter(o => o.id !== id));
 
-  if(loading) return (
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"sans-serif"}}>
-      <p style={{color:"#666",fontSize:15}}>Carregando obras... 🏗️</p>
+  if (loading) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "sans-serif" }}>
+      <p style={{ color: "#666", fontSize: 15 }}>Carregando obras... 🏗️</p>
     </div>
   );
 
-  // DISCIPLINA
-  if(screen==="disciplina"&&obra){
-    const d=obra.disciplinas.find((x:any)=>x.id===discId);
-    if(!d){setScreen("obra");return null;}
-    return(
-      <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2rem",gap:"1.2rem",textAlign:"center",fontFamily:"sans-serif"}}>
-        <span style={{fontSize:56}}>{d.icone}</span>
-        <div><p style={{margin:"0 0 2px",fontSize:12,color:"#666"}}>{obra.nome}</p><h2 style={{margin:0,fontSize:22,fontWeight:500}}>{d.nome}</h2></div>
-        {d.pdfUrl?<><p style={{margin:0,fontSize:12,color:"#666"}}>{d.pdfName} · {d.updatedAt}</p>
-          <a href={d.pdfUrl} target="_blank" rel="noreferrer" style={{padding:"12px 32px",background:"#111",color:"#fff",borderRadius:"12px",textDecoration:"none",fontWeight:500,fontSize:15}}>Abrir Projeto PDF</a></>
-          :<p style={{color:"#666",fontSize:14}}>Nenhum projeto cadastrado.</p>}
-        <button style={s({marginTop:4})} onClick={()=>setScreen("obra")}>← Voltar</button>
+  // ── DISCIPLINA ──
+  if (screen === "disciplina" && obra) {
+    const d = obra.disciplinas.find((x: any) => x.id === discId);
+    if (!d) { setScreen("obra"); return null; }
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "2rem", gap: "1.2rem", textAlign: "center", fontFamily: "sans-serif" }}>
+        <span style={{ fontSize: 56 }}>{d.icone}</span>
+        <div><p style={{ margin: "0 0 2px", fontSize: 12, color: "#666" }}>{obra.nome}</p><h2 style={{ margin: 0, fontSize: 22, fontWeight: 500 }}>{d.nome}</h2></div>
+        {d.pdfUrl
+          ? <><p style={{ margin: 0, fontSize: 12, color: "#666" }}>{d.pdfName} · {d.updatedAt}</p>
+            <a href={d.pdfUrl} target="_blank" rel="noreferrer" style={{ padding: "12px 32px", background: "#111", color: "#fff", borderRadius: "12px", textDecoration: "none", fontWeight: 500, fontSize: 15 }}>Abrir Projeto PDF</a></>
+          : <p style={{ color: "#666", fontSize: 14 }}>Nenhum projeto cadastrado.</p>}
+        <button style={s({ marginTop: 4 })} onClick={() => setScreen("obra")}>← Voltar</button>
       </div>
     );
   }
 
-  // OBRA
-  if(screen==="obra"&&obra){
-    return(
-      <div style={{padding:"1.5rem",fontFamily:"sans-serif",maxWidth:700,margin:"0 auto"}}>
-        <input type="file" accept=".pdf" ref={fileRef} onChange={handleFile} style={{display:"none"}}/>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"1.5rem",flexWrap:"wrap",gap:8}}>
+  // ── OBRA ──
+  if (screen === "obra" && obra) {
+    return (
+      <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
+        <input type="file" accept=".pdf" ref={fileRef} onChange={handleFile} style={{ display: "none" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem", flexWrap: "wrap", gap: 8 }}>
           <div>
-            <button style={{...s({padding:"4px 0",border:"none",fontSize:12,color:"#666"}),marginBottom:4}} onClick={goHome}>← Obras</button>
-            <h1 style={{margin:0,fontSize:18,fontWeight:500}}>{obra.nome}</h1>
+            <button style={{ ...s({ padding: "4px 0", border: "none", fontSize: 12, color: "#666" }), marginBottom: 4 }} onClick={goHome}>← Obras</button>
+            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>{obra.nome}</h1>
           </div>
-          <div style={{display:"flex",gap:8}}>
-            {role==="pm"&&<button style={s()} onClick={()=>setScreen("pm")}>⚙️ Gerenciar</button>}
-            {!role&&<button style={{...s({fontSize:11,color:"#999",padding:"4px 8px"})}} onClick={()=>setLoginFor("pm")}>PM/Arq</button>}
+          <div style={{ display: "flex", gap: 8 }}>
+            {role === "pm" && <button style={s()} onClick={() => setScreen("pm")}>⚙️ Gerenciar</button>}
+            {!role && <button style={{ ...s({ fontSize: 11, color: "#999", padding: "4px 8px" }) }} onClick={() => setLoginFor("pm")}>PM/Arq</button>}
           </div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
-          {obra.disciplinas.map((d:any)=>(
-            <button key={d.id} onClick={()=>{setDiscId(d.id);setScreen("disciplina");}}
-              style={{background:"#fff",border:"0.5px solid #ddd",borderRadius:"12px",padding:"1.25rem 1rem",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-              <span style={{fontSize:32}}>{d.icone}</span>
-              <span style={{fontWeight:500,fontSize:13,color:"#111"}}>{d.nome}</span>
-              <span style={{fontSize:11,color:d.pdfUrl?"#16a34a":"#aaa"}}>{d.pdfUrl?"✓ Disponível":"Sem projeto"}</span>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 12 }}>
+          {obra.disciplinas.map((d: any) => (
+            <button key={d.id} onClick={() => { setDiscId(d.id); setScreen("disciplina"); }}
+              style={{ background: "#fff", border: "0.5px solid #ddd", borderRadius: "12px", padding: "1.25rem 1rem", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 32 }}>{d.icone}</span>
+              <span style={{ fontWeight: 500, fontSize: 13, color: "#111" }}>{d.nome}</span>
+              <span style={{ fontSize: 11, color: d.pdfUrl ? "#16a34a" : "#aaa" }}>{d.pdfUrl ? "✓ Disponível" : "Sem projeto"}</span>
             </button>
           ))}
-          {obra.disciplinas.length===0&&<p style={{color:"#666",fontSize:13,gridColumn:"1/-1"}}>Nenhuma disciplina cadastrada.</p>}
+          {obra.disciplinas.length === 0 && <p style={{ color: "#666", fontSize: 13, gridColumn: "1/-1" }}>Nenhuma disciplina cadastrada.</p>}
         </div>
-        {loginFor&&<LoginModal title="PM / Arquiteto" onLogin={doLogin} onClose={()=>setLoginFor(null)}/>}
+        {loginFor && <LoginModal title="PM / Arquiteto" onLogin={doLogin} onClose={() => setLoginFor(null)} />}
       </div>
     );
   }
 
-  // PM
-  if(screen==="pm"&&obra){
-    const disc=historicoDisc?obra.disciplinas.find((d:any)=>d.id===historicoDisc):null;
-    return(
-      <div style={{padding:"1.5rem",fontFamily:"sans-serif",maxWidth:700,margin:"0 auto"}}>
-        <input type="file" accept=".pdf" ref={fileRef} onChange={handleFile} style={{display:"none"}}/>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"1.5rem",flexWrap:"wrap",gap:8}}>
+  // ── PM ──
+  if (screen === "pm" && obra) {
+    const disc = historicoDisc ? obra.disciplinas.find((d: any) => d.id === historicoDisc) : null;
+    return (
+      <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
+        <input type="file" accept=".pdf" ref={fileRef} onChange={handleFile} style={{ display: "none" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem", flexWrap: "wrap", gap: 8 }}>
           <div>
-            <button style={{...s({padding:"4px 0",border:"none",fontSize:12,color:"#666"}),marginBottom:4}} onClick={()=>setScreen("obra")}>← {obra.nome}</button>
-            <h1 style={{margin:0,fontSize:18,fontWeight:500}}>PM / Arquiteto</h1>
+            <button style={{ ...s({ padding: "4px 0", border: "none", fontSize: 12, color: "#666" }), marginBottom: 4 }} onClick={() => setScreen("obra")}>← {obra.nome}</button>
+            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>PM / Arquiteto</h1>
           </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <button style={s()} onClick={()=>printQRSheet(obra)}>🖨️ Imprimir QR Codes</button>
-            <button style={s()} onClick={()=>setAddDiscModal(true)}>+ Disciplina</button>
-            <button style={s({color:"#666"})} onClick={goHome}>Sair</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button style={s()} onClick={() => printQRSheet(obra)}>🖨️ Imprimir QR Codes</button>
+            <button style={s()} onClick={() => setAddDiscModal(true)}>+ Disciplina</button>
+            <button style={s({ color: "#666" })} onClick={goHome}>Sair</button>
           </div>
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {obra.disciplinas.map((d:any)=>(
-            <div key={d.id} style={{background:"#fff",border:"0.5px solid #ddd",borderRadius:"12px",padding:"1rem 1.25rem"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                <span style={{fontSize:26}}>{d.icone}</span>
-                <div style={{flex:1,minWidth:100}}>
-                  <p style={{margin:0,fontWeight:500,fontSize:14}}>{d.nome}</p>
-                  <p style={{margin:0,fontSize:11,color:"#666"}}>
-                    {d.pdfName?`${d.pdfName} · ${d.updatedAt}`:"Sem PDF"}
-                    {d.historico&&d.historico.length>0&&<span style={{color:"#aaa"}}> · {d.historico.length} versão(ões) anterior(es)</span>}
+
+        {/* QR Geral da Obra */}
+        <div style={{ background: "#fff", border: "2px solid #111", borderRadius: "12px", padding: "1rem 1.25rem", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 26 }}>🏢</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>QR Geral — {obra.nome}</p>
+              <p style={{ margin: 0, fontSize: 11, color: "#666" }}>Mostra todas as disciplinas da obra</p>
+            </div>
+            <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => setShowGeralQR(!showGeralQR)}>
+              {showGeralQR ? "Fechar QR" : "Ver QR Geral"}
+            </button>
+          </div>
+          {showGeralQR && (
+            <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "0.5px solid #eee", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+              <QRCodeImg value={`${APP_URL}/?obra=${obraId}`} size={140} />
+              <div>
+                <p style={{ margin: "0 0 4px", fontWeight: 500, fontSize: 13 }}>Aponte a câmera para escanear</p>
+                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#666" }}>Abre a lista completa de disciplinas desta obra.</p>
+                <p style={{ margin: 0, fontSize: 10, fontFamily: "monospace", color: "#aaa", background: "#f5f5f5", padding: "4px 8px", borderRadius: 4 }}>{APP_URL}/?obra={obraId}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {obra.disciplinas.map((d: any) => (
+            <div key={d.id} style={{ background: "#fff", border: "0.5px solid #ddd", borderRadius: "12px", padding: "1rem 1.25rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 26 }}>{d.icone}</span>
+                <div style={{ flex: 1, minWidth: 100 }}>
+                  <p style={{ margin: 0, fontWeight: 500, fontSize: 14 }}>{d.nome}</p>
+                  <p style={{ margin: 0, fontSize: 11, color: "#666" }}>
+                    {d.pdfName ? `${d.pdfName} · ${d.updatedAt}` : "Sem PDF"}
+                    {d.historico && d.historico.length > 0 && <span style={{ color: "#aaa" }}> · {d.historico.length} versão(ões) anterior(es)</span>}
                   </p>
                 </div>
-                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                  <button style={s({fontSize:12,padding:"5px 12px"})} onClick={()=>triggerUpload(d.id)} disabled={uploading}>
-                    {uploading && activeUpload===d.id ? "Enviando..." : d.pdfUrl?"Atualizar PDF":"Upload PDF"}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => triggerUpload(d.id)} disabled={uploading}>
+                    {uploading && activeUpload === d.id ? "Enviando..." : d.pdfUrl ? "Atualizar PDF" : "Upload PDF"}
                   </button>
-                  <button style={s({fontSize:12,padding:"5px 12px"})} onClick={()=>setHistoricoDisc(d.id)}>Histórico</button>
-                  <button style={s({fontSize:12,padding:"5px 12px"})} onClick={()=>setShowQR(showQR===d.id?null:d.id)}>QR Code</button>
-                  <button style={s({fontSize:12,padding:"5px 10px",color:"red"})} onClick={()=>removeDisc(d.id)}>✕</button>
+                  <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => setHistoricoDisc(d.id)}>Histórico</button>
+                  <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => setShowQR(showQR === d.id ? null : d.id)}>QR Code</button>
+                  <button style={s({ fontSize: 12, padding: "5px 10px", color: "red" })} onClick={() => removeDisc(d.id)}>✕</button>
                 </div>
               </div>
-              {showQR===d.id&&(
-                <div style={{marginTop:"1rem",paddingTop:"1rem",borderTop:"0.5px solid #eee",display:"flex",gap:"1.5rem",alignItems:"flex-start",flexWrap:"wrap"}}>
-                  <QRCodeSVG value={`voaz/${obraId}/${d.id}`} size={130}/>
+              {showQR === d.id && (
+                <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "0.5px solid #eee", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <QRCodeImg value={`${APP_URL}/?obra=${obraId}&disc=${d.id}`} size={140} />
                   <div>
-                    <p style={{margin:"0 0 4px",fontWeight:500,fontSize:13}}>{obra.nome} — {d.nome}</p>
-                    <p style={{margin:"0 0 8px",fontSize:12,color:"#666"}}>QR code permanente. Nunca muda.</p>
-                    <p style={{margin:0,fontSize:10,fontFamily:"monospace",color:"#aaa",background:"#f5f5f5",padding:"4px 8px",borderRadius:4}}>voaz/{obraId}/{d.id}</p>
+                    <p style={{ margin: "0 0 4px", fontWeight: 500, fontSize: 13 }}>{obra.nome} — {d.nome}</p>
+                    <p style={{ margin: "0 0 4px", fontSize: 12, color: "#666" }}>Aponte a câmera para escanear.</p>
+                    <p style={{ margin: "0 0 8px", fontSize: 12, color: "#666" }}>QR code permanente. Nunca muda.</p>
+                    <p style={{ margin: 0, fontSize: 10, fontFamily: "monospace", color: "#aaa", background: "#f5f5f5", padding: "4px 8px", borderRadius: 4 }}>{APP_URL}/?obra={obraId}&disc={d.id}</p>
                   </div>
                 </div>
               )}
             </div>
           ))}
-          {obra.disciplinas.length===0&&<p style={{color:"#666",fontSize:13}}>Nenhuma disciplina. Adicione a primeira!</p>}
+          {obra.disciplinas.length === 0 && <p style={{ color: "#666", fontSize: 13 }}>Nenhuma disciplina. Adicione a primeira!</p>}
         </div>
-        {disc&&<HistoricoModal disc={disc} onClose={()=>setHistoricoDisc(null)}/>}
-        {addDiscModal&&(
+
+        {disc && <HistoricoModal disc={disc} onClose={() => setHistoricoDisc(null)} />}
+        {addDiscModal && (
           <Modal title="Nova Disciplina">
-            <div style={{display:"flex",gap:8,marginBottom:10}}>
-              <input value={newIcone} onChange={e=>setNewIcone(e.target.value)}
-                style={{width:46,textAlign:"center",fontSize:20,borderRadius:"8px",border:"0.5px solid #ccc",padding:"6px"}}/>
-              <input placeholder="Nome" value={newNome} onChange={e=>setNewNome(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addDisc()}
-                style={{flex:1,padding:"8px 12px",borderRadius:"8px",border:"0.5px solid #ccc",fontSize:14}}/>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <input value={newIcone} onChange={e => setNewIcone(e.target.value)}
+                style={{ width: 46, textAlign: "center", fontSize: 20, borderRadius: "8px", border: "0.5px solid #ccc", padding: "6px" }} />
+              <input placeholder="Nome" value={newNome} onChange={e => setNewNome(e.target.value)} onKeyDown={e => e.key === "Enter" && addDisc()}
+                style={{ flex: 1, padding: "8px 12px", borderRadius: "8px", border: "0.5px solid #ccc", fontSize: 14 }} />
             </div>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-              <button style={s()} onClick={()=>setAddDiscModal(false)}>Cancelar</button>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button style={s()} onClick={() => setAddDiscModal(false)}>Cancelar</button>
               <button style={sp()} onClick={addDisc}>Criar</button>
             </div>
           </Modal>
@@ -392,24 +399,24 @@ export default function App() {
     );
   }
 
-  // COMPRAS
-  if(screen==="compras"){
-    return(
-      <div style={{padding:"1.5rem",fontFamily:"sans-serif",maxWidth:700,margin:"0 auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.5rem"}}>
-          <div><h1 style={{margin:0,fontSize:18,fontWeight:500}}>Compras & Orçamentos</h1><p style={{margin:0,fontSize:12,color:"#666"}}>Todos os projetos — versões atuais</p></div>
-          <button style={s({color:"#666"})} onClick={goHome}>Sair</button>
+  // ── COMPRAS ──
+  if (screen === "compras") {
+    return (
+      <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+          <div><h1 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>Compras & Orçamentos</h1><p style={{ margin: 0, fontSize: 12, color: "#666" }}>Todos os projetos — versões atuais</p></div>
+          <button style={s({ color: "#666" })} onClick={goHome}>Sair</button>
         </div>
-        {obras.map(o=>(
-          <div key={o.id} style={{marginBottom:"1.5rem"}}>
-            <p style={{margin:"0 0 8px",fontWeight:500,fontSize:14}}>🏢 {o.nome}</p>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {o.disciplinas.length===0&&<p style={{fontSize:12,color:"#aaa",margin:0}}>Sem disciplinas.</p>}
-              {o.disciplinas.map((d:any)=>(
-                <div key={d.id} style={{background:"#fff",border:"0.5px solid #ddd",borderRadius:"8px",padding:"10px 14px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                  <span style={{fontSize:20}}>{d.icone}</span>
-                  <div style={{flex:1}}><p style={{margin:0,fontSize:13,fontWeight:500}}>{d.nome}</p><p style={{margin:0,fontSize:11,color:"#666"}}>{d.pdfName?`${d.pdfName} · ${d.updatedAt}`:"Sem projeto"}</p></div>
-                  {d.pdfUrl?<a href={d.pdfUrl} target="_blank" rel="noreferrer" style={{...sp({fontSize:12,padding:"5px 12px",textDecoration:"none"})}}>Baixar PDF</a>:<span style={{fontSize:11,color:"#aaa"}}>—</span>}
+        {obras.map(o => (
+          <div key={o.id} style={{ marginBottom: "1.5rem" }}>
+            <p style={{ margin: "0 0 8px", fontWeight: 500, fontSize: 14 }}>🏢 {o.nome}</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {o.disciplinas.length === 0 && <p style={{ fontSize: 12, color: "#aaa", margin: 0 }}>Sem disciplinas.</p>}
+              {o.disciplinas.map((d: any) => (
+                <div key={d.id} style={{ background: "#fff", border: "0.5px solid #ddd", borderRadius: "8px", padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 20 }}>{d.icone}</span>
+                  <div style={{ flex: 1 }}><p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>{d.nome}</p><p style={{ margin: 0, fontSize: 11, color: "#666" }}>{d.pdfName ? `${d.pdfName} · ${d.updatedAt}` : "Sem projeto"}</p></div>
+                  {d.pdfUrl ? <a href={d.pdfUrl} target="_blank" rel="noreferrer" style={{ ...sp({ fontSize: 12, padding: "5px 12px", textDecoration: "none" }) }}>Baixar PDF</a> : <span style={{ fontSize: 11, color: "#aaa" }}>—</span>}
                 </div>
               ))}
             </div>
@@ -419,37 +426,37 @@ export default function App() {
     );
   }
 
-  // HOME
-  return(
-    <div style={{padding:"1.5rem",fontFamily:"sans-serif",maxWidth:700,margin:"0 auto"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"1.5rem",flexWrap:"wrap",gap:8}}>
-        <div><h1 style={{margin:0,fontSize:20,fontWeight:500}}>VOAZ Obras</h1><p style={{margin:0,fontSize:13,color:"#666"}}>Selecione a obra</p></div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {role==="pm"&&<button style={s()} onClick={()=>setAddObraModal(true)}>+ Nova obra</button>}
-          <button style={s({fontSize:12,padding:"6px 12px"})} onClick={()=>setLoginFor("pm")}>PM / Arq</button>
-          <button style={s({fontSize:12,padding:"6px 12px"})} onClick={()=>setLoginFor("compras")}>Compras</button>
+  // ── HOME ──
+  return (
+    <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem", flexWrap: "wrap", gap: 8 }}>
+        <div><h1 style={{ margin: 0, fontSize: 20, fontWeight: 500 }}>VOAZ Obras</h1><p style={{ margin: 0, fontSize: 13, color: "#666" }}>Selecione a obra</p></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {role === "pm" && <button style={s()} onClick={() => setAddObraModal(true)}>+ Nova obra</button>}
+          <button style={s({ fontSize: 12, padding: "6px 12px" })} onClick={() => setLoginFor("pm")}>PM / Arq</button>
+          <button style={s({ fontSize: 12, padding: "6px 12px" })} onClick={() => setLoginFor("compras")}>Compras</button>
         </div>
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {obras.map(o=>(
-          <div key={o.id} style={{background:"#fff",border:"0.5px solid #ddd",borderRadius:"12px",padding:"1rem 1.25rem",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <span style={{fontSize:28}}>🏢</span>
-            <div style={{flex:1}}><p style={{margin:0,fontWeight:500,fontSize:15}}>{o.nome}</p><p style={{margin:0,fontSize:12,color:"#666"}}>{o.disciplinas.length} disciplina{o.disciplinas.length!==1?"s":""}</p></div>
-            <div style={{display:"flex",gap:8}}>
-              <button style={sp({fontSize:13})} onClick={()=>goObra(o.id)}>Abrir</button>
-              {role==="pm"&&<button style={s({fontSize:12,color:"red",padding:"6px 10px"})} onClick={()=>removeObra(o.id)}>✕</button>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {obras.map(o => (
+          <div key={o.id} style={{ background: "#fff", border: "0.5px solid #ddd", borderRadius: "12px", padding: "1rem 1.25rem", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 28 }}>🏢</span>
+            <div style={{ flex: 1 }}><p style={{ margin: 0, fontWeight: 500, fontSize: 15 }}>{o.nome}</p><p style={{ margin: 0, fontSize: 12, color: "#666" }}>{o.disciplinas.length} disciplina{o.disciplinas.length !== 1 ? "s" : ""}</p></div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={sp({ fontSize: 13 })} onClick={() => goObra(o.id)}>Abrir</button>
+              {role === "pm" && <button style={s({ fontSize: 12, color: "red", padding: "6px 10px" })} onClick={() => removeObra(o.id)}>✕</button>}
             </div>
           </div>
         ))}
-        {obras.length===0&&<p style={{color:"#666",fontSize:13}}>Nenhuma obra cadastrada.</p>}
+        {obras.length === 0 && <p style={{ color: "#666", fontSize: 13 }}>Nenhuma obra cadastrada.</p>}
       </div>
-      {loginFor&&<LoginModal title={loginFor==="pm"?"PM / Arquiteto":"Compras & Orçamentos"} onLogin={doLogin} onClose={()=>setLoginFor(null)}/>}
-      {addObraModal&&(
+      {loginFor && <LoginModal title={loginFor === "pm" ? "PM / Arquiteto" : "Compras & Orçamentos"} onLogin={doLogin} onClose={() => setLoginFor(null)} />}
+      {addObraModal && (
         <Modal title="Nova Obra">
-          <input placeholder="Nome da obra" value={newObraNome} onChange={e=>setNewObraNome(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addObra()}
-            style={{width:"100%",boxSizing:"border-box",padding:"9px 12px",borderRadius:"8px",border:"0.5px solid #ccc",fontSize:14,marginBottom:10}}/>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-            <button style={s()} onClick={()=>setAddObraModal(false)}>Cancelar</button>
+          <input placeholder="Nome da obra" value={newObraNome} onChange={e => setNewObraNome(e.target.value)} onKeyDown={e => e.key === "Enter" && addObra()}
+            style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", borderRadius: "8px", border: "0.5px solid #ccc", fontSize: 14, marginBottom: 10 }} />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button style={s()} onClick={() => setAddObraModal(false)}>Cancelar</button>
             <button style={sp()} onClick={addObra}>Criar</button>
           </div>
         </Modal>
