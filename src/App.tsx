@@ -2,13 +2,13 @@ import { useState, useEffect, useRef } from "react";
 
 // ── Config ───────────────────────────────────────────────────
 const SB_URL = "https://xhbalviwelidonrkoeim.supabase.co";
-const SB_KEY = "sb_publishable_uOQhqR6A2aH01mvqw8fswA_7ZWvx5Av";
+const SB_KEY = import.meta.env.VITE_SB_KEY as string;
 const ROW_ID = 1;
 const BUCKET = "projetos";
 const APP_URL = "https://voaz-projetos.vercel.app";
 const WA_PHONE = "5511994009118";
-const WA_APIKEY = "2922050";
-const RESEND_KEY = "re_brD5Sc13_JQniaeSHu9E9EsbKXLRtHV5E";
+const WA_APIKEY = import.meta.env.VITE_WA_APIKEY as string;
+const RESEND_KEY = import.meta.env.VITE_RESEND_KEY as string;
 const EMAIL_FROM = "Notificações VOAZ <onboarding@resend.dev>";
 
 // ── Supabase ─────────────────────────────────────────────────
