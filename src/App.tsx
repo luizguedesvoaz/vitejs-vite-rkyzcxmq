@@ -1,12 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 
-// ── Supabase config ──────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────
 const SB_URL = "https://xhbalviwelidonrkoeim.supabase.co";
 const SB_KEY = "sb_publishable_uOQhqR6A2aH01mvqw8fswA_7ZWvx5Av";
 const ROW_ID = 1;
 const BUCKET = "projetos";
 const APP_URL = "https://voaz-projetos.vercel.app";
+const WA_PHONE = "5511994009118";
+const WA_APIKEY = "2922050";
+const RESEND_KEY = "re_brD5Sc13_JQniaeSHu9E9EsbKXLRtHV5E";
+const EMAIL_FROM = "Notificações VOAZ <onboarding@resend.dev>";
 
+// ── Supabase ─────────────────────────────────────────────────
 async function sbGet() {
   const r = await fetch(`${SB_URL}/rest/v1/obras?id=eq.${ROW_ID}&select=dados`, {
     headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
@@ -37,89 +42,120 @@ async function uploadPDF(file: File, obraId: string, discId: string): Promise<st
   return `${SB_URL}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
-// ── QR Code real via API ─────────────────────────────────────
-function QRCodeImg({ value, size = 140 }: { value: string; size?: number }) {
-  const url = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(value)}&margin=10`;
-  return <img src={url} width={size} height={size} style={{ display: "block", borderRadius: 6 }} alt="QR Code" />;
+// ── Notificações ─────────────────────────────────────────────
+// Fila de atualizações pendentes { obraId, obraNome, discs: [{icone, nome}], timer }
+const pendingMap: Record<string, { obraNome: string; emails: string[]; discs: {icone:string;nome:string}[]; timer: any }> = {};
+
+function scheduleNotification(obraId: string, obraNome: string, emails: string[], disc: {icone:string;nome:string}) {
+  if (pendingMap[obraId]) {
+    clearTimeout(pendingMap[obraId].timer);
+    pendingMap[obraId].discs.push(disc);
+  } else {
+    pendingMap[obraId] = { obraNome, emails, discs: [disc], timer: null };
+  }
+  pendingMap[obraId].timer = setTimeout(() => {
+    fireNotification(obraId);
+  }, 3 * 60 * 60 * 1000); // 3 horas
 }
 
-// ── Print QR Sheet ───────────────────────────────────────────
-function printQRSheet(obra: any, includeGeral = true) {
+async function fireNotification(obraId: string) {
+  const p = pendingMap[obraId];
+  if (!p) return;
+  delete pendingMap[obraId];
+
+  const discList = p.discs.map(d => `${d.icone} ${d.nome}`).join("\n");
+  const discListHtml = p.discs.map(d => `<li style="margin:4px 0;">${d.icone} <strong>${d.nome}</strong></li>`).join("");
+  const obraUrl = `${APP_URL}/?obra=${obraId}`;
+  const count = p.discs.length;
+  const now = new Date().toLocaleString("pt-BR");
+
+  // WhatsApp
+  const waMsg = encodeURIComponent(
+    `📦 *VOAZ Obras — Pacote de Atualizações*\n\n` +
+    `🏢 Obra: ${p.obraNome}\n` +
+    `🕐 ${now} — ${count} projeto${count !== 1 ? "s" : ""} atualizado${count !== 1 ? "s" : ""}:\n\n` +
+    `${discList}\n\n` +
+    `🔗 Acesse: ${obraUrl}`
+  );
+  fetch(`https://api.callmebot.com/whatsapp.php?phone=${WA_PHONE}&text=${waMsg}&apikey=${WA_APIKEY}`).catch(() => {});
+
+  // Email
+  if (p.emails.length > 0) {
+    const html = `
+      <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:24px;">
+        <div style="background:#111;color:#fff;padding:16px 20px;border-radius:10px 10px 0 0;">
+          <h2 style="margin:0;font-size:16px;">📦 Pacote de Atualizações — VOAZ Obras</h2>
+        </div>
+        <div style="border:1px solid #eee;border-top:none;padding:20px;border-radius:0 0 10px 10px;">
+          <p style="margin:0 0 12px;font-size:14px;color:#333;">🏢 <strong>${p.obraNome}</strong></p>
+          <p style="margin:0 0 8px;font-size:13px;color:#666;">${now} — ${count} projeto${count !== 1 ? "s" : ""} atualizado${count !== 1 ? "s" : ""}:</p>
+          <ul style="margin:0 0 16px;padding-left:20px;font-size:14px;color:#111;">${discListHtml}</ul>
+          <a href="${obraUrl}" style="display:inline-block;padding:10px 24px;background:#111;color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;">
+            Acessar Obra
+          </a>
+          <p style="margin:16px 0 0;font-size:11px;color:#aaa;">Este e-mail foi gerado automaticamente pelo VOAZ Obras.</p>
+        </div>
+      </div>`;
+
+    fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: EMAIL_FROM,
+        to: p.emails,
+        subject: `📦 ${count} projeto${count !== 1 ? "s" : ""} atualizado${count !== 1 ? "s" : ""} — ${p.obraNome}`,
+        html
+      })
+    }).catch(() => {});
+  }
+}
+
+// ── QR Code ──────────────────────────────────────────────────
+function QRCodeImg({ value, size = 140 }: { value: string; size?: number }) {
+  return <img src={`https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(value)}&margin=10`} width={size} height={size} style={{ display: "block", borderRadius: 6 }} alt="QR Code" />;
+}
+
+function printQRSheet(obra: any) {
   const size = 140;
   const makeQR = (val: string) => `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(val)}&margin=10`;
-
-  const geralCard = includeGeral ? `
+  const geralCard = `
     <div style="display:inline-flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border:2px solid #111;border-radius:8px;background:#fff;width:190px;box-sizing:border-box;">
       <div style="font-size:28px;">🏢</div>
       <img src="${makeQR(`${APP_URL}/?obra=${obra.id}`)}" width="${size}" height="${size}" style="border-radius:4px;"/>
-      <div style="text-align:center;">
-        <div style="font-weight:700;font-size:13px;color:#111;">TODAS AS DISCIPLINAS</div>
-        <div style="font-size:11px;color:#444;margin-top:2px;">${obra.nome}</div>
-        <div style="font-size:9px;color:#999;font-family:monospace;margin-top:2px;">QR Geral da Obra</div>
-      </div>
-    </div>` : "";
-
+      <div style="text-align:center;"><div style="font-weight:700;font-size:13px;color:#111;">TODAS AS DISCIPLINAS</div><div style="font-size:11px;color:#444;margin-top:2px;">${obra.nome}</div></div>
+    </div>`;
   const cards = obra.disciplinas.map((d: any) => `
     <div style="display:inline-flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border:1px solid #ddd;border-radius:8px;background:#fff;width:190px;box-sizing:border-box;">
       <div style="font-size:28px;">${d.icone}</div>
       <img src="${makeQR(`${APP_URL}/?obra=${obra.id}&disc=${d.id}`)}" width="${size}" height="${size}" style="border-radius:4px;"/>
-      <div style="text-align:center;">
-        <div style="font-weight:600;font-size:13px;color:#111;">${d.nome}</div>
-        <div style="font-size:10px;color:#666;margin-top:2px;">${obra.nome}</div>
-      </div>
+      <div style="text-align:center;"><div style="font-weight:600;font-size:13px;color:#111;">${d.nome}</div><div style="font-size:10px;color:#666;margin-top:2px;">${obra.nome}</div></div>
     </div>`).join("");
-
   const html = `<!DOCTYPE html><html><head><title>QR Codes — ${obra.nome}</title>
     <style>body{font-family:sans-serif;padding:24px;background:#f5f5f5;}h2{font-size:16px;color:#333;margin-bottom:16px;}.grid{display:flex;flex-wrap:wrap;gap:16px;}@media print{body{background:white;padding:12px;}@page{size:A4;margin:12mm;}}</style>
     </head><body><h2>QR Codes — ${obra.nome}</h2><div class="grid">${geralCard}${cards}</div>
-    <script>
-      // wait for images to load before printing
-      window.onload = () => {
-        const imgs = document.querySelectorAll('img');
-        let loaded = 0;
-        imgs.forEach(img => {
-          if(img.complete) { loaded++; if(loaded===imgs.length) window.print(); }
-          else img.onload = () => { loaded++; if(loaded===imgs.length) window.print(); };
-        });
-        if(imgs.length===0) window.print();
-      };
-    <\/script></body></html>`;
-  const w = window.open("", "_blank")!;
-  w.document.write(html);
-  w.document.close();
+    <script>window.onload=()=>{const imgs=document.querySelectorAll('img');let l=0;imgs.forEach(i=>{if(i.complete){l++;if(l===imgs.length)window.print();}else i.onload=()=>{l++;if(l===imgs.length)window.print();}});if(!imgs.length)window.print();};<\/script></body></html>`;
+  const w = window.open("", "_blank")!; w.document.write(html); w.document.close();
 }
 
-// ── Deep link handler ────────────────────────────────────────
 function useDeepLink(obras: any[], setScreen: any, setObraId: any, setDiscId: any) {
   useEffect(() => {
     if (!obras.length) return;
-    const params = new URLSearchParams(window.location.search);
-    const obraParam = params.get("obra");
-    const discParam = params.get("disc");
-    if (obraParam) {
-      const obra = obras.find((o: any) => o.id === obraParam);
-      if (obra) {
-        setObraId(obraParam);
-        if (discParam) {
-          const disc = obra.disciplinas.find((d: any) => d.id === discParam);
-          if (disc) { setDiscId(discParam); setScreen("disciplina"); }
-          else setScreen("obra");
-        } else {
-          setScreen("obra");
-        }
-      }
+    const p = new URLSearchParams(window.location.search);
+    const oid = p.get("obra"), did = p.get("disc");
+    if (oid) {
+      const o = obras.find((x: any) => x.id === oid);
+      if (o) { setObraId(oid); if (did && o.disciplinas.find((d: any) => d.id === did)) { setDiscId(did); setScreen("disciplina"); } else setScreen("obra"); }
     }
   }, [obras]);
 }
 
-// ── Styles ───────────────────────────────────────────────────
-const s = (extra: any = {}) => ({ padding: "8px 16px", border: "0.5px solid #ccc", borderRadius: "8px", background: "transparent", cursor: "pointer", fontSize: 13, color: "#111", ...extra });
-const sp = (extra: any = {}) => ({ ...s(), background: "#111", color: "#fff", fontWeight: 500, border: "none", ...extra });
+const s = (e: any = {}) => ({ padding: "8px 16px", border: "0.5px solid #ccc", borderRadius: "8px", background: "transparent", cursor: "pointer", fontSize: 13, color: "#111", ...e });
+const sp = (e: any = {}) => ({ ...s(), background: "#111", color: "#fff", fontWeight: 500, border: "none", ...e });
 
 function Modal({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-      <div style={{ background: "#fff", borderRadius: "12px", padding: "1.5rem", width: 340, border: "0.5px solid #ddd", maxHeight: "80vh", overflowY: "auto" }}>
+      <div style={{ background: "#fff", borderRadius: "12px", padding: "1.5rem", width: 360, border: "0.5px solid #ddd", maxHeight: "85vh", overflowY: "auto" }}>
         <h3 style={{ margin: "0 0 1rem", fontWeight: 500, fontSize: 16 }}>{title}</h3>
         {children}
       </div>
@@ -127,7 +163,7 @@ function Modal({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function LoginModal({ title, onLogin, onClose }: { title: string; onLogin: (pw: string) => boolean; onClose: () => void }) {
+function LoginModal({ title, onLogin, onClose }: any) {
   const [pw, setPw] = useState(""), [err, setErr] = useState("");
   const attempt = () => { if (!onLogin(pw)) setErr("Senha incorreta."); };
   return (
@@ -143,19 +179,18 @@ function LoginModal({ title, onLogin, onClose }: { title: string; onLogin: (pw: 
   );
 }
 
-function HistoricoModal({ disc, onClose }: { disc: any; onClose: () => void }) {
+function HistoricoModal({ disc, onClose }: any) {
   return (
     <Modal title={`Histórico — ${disc.nome}`}>
       {disc.pdfUrl && (
-        <div style={{ marginBottom: 12, padding: "10px 12px", background: "#f5f5f5", borderRadius: "8px", border: "0.5px solid #ddd" }}>
+        <div style={{ marginBottom: 12, padding: "10px 12px", background: "#f5f5f5", borderRadius: "8px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div><p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>Versão atual</p><p style={{ margin: 0, fontSize: 11, color: "#666" }}>{disc.pdfName} · {disc.updatedAt}</p></div>
             <a href={disc.pdfUrl} target="_blank" rel="noreferrer" style={{ ...sp({ fontSize: 11, padding: "4px 10px", textDecoration: "none" }) }}>Ver</a>
           </div>
         </div>
       )}
-      {(!disc.historico || disc.historico.length === 0)
-        ? <p style={{ fontSize: 13, color: "#666", margin: 0 }}>Nenhuma versão anterior.</p>
+      {(!disc.historico || !disc.historico.length) ? <p style={{ fontSize: 13, color: "#666" }}>Nenhuma versão anterior.</p>
         : [...disc.historico].reverse().map((v: any, i: number) => (
           <div key={i} style={{ marginBottom: 8, padding: "8px 12px", border: "0.5px solid #ddd", borderRadius: "8px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -163,17 +198,50 @@ function HistoricoModal({ disc, onClose }: { disc: any; onClose: () => void }) {
               <a href={v.pdfUrl} target="_blank" rel="noreferrer" style={{ ...s({ fontSize: 11, padding: "4px 10px", textDecoration: "none" }) }}>Ver</a>
             </div>
           </div>
-        ))
-      }
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-        <button style={s()} onClick={onClose}>Fechar</button>
+        ))}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><button style={s()} onClick={onClose}>Fechar</button></div>
+    </Modal>
+  );
+}
+
+// Modal de configuração de notificações da obra
+function NotifModal({ obra, onSave, onClose }: { obra: any; onSave: (emails: string[]) => void; onClose: () => void }) {
+  const [emailInput, setEmailInput] = useState("");
+  const [emails, setEmails] = useState<string[]>(obra.notifEmails || []);
+  const add = () => {
+    const e = emailInput.trim().toLowerCase();
+    if (!e || !e.includes("@") || emails.includes(e)) return;
+    setEmails(prev => [...prev, e]);
+    setEmailInput("");
+  };
+  return (
+    <Modal title={`🔔 Notificações — ${obra.nome}`}>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: "#666" }}>
+        Quando um PDF for atualizado, um resumo será enviado por WhatsApp e e-mail após 3 horas — agrupando todas as atualizações do período.
+      </p>
+      <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 500 }}>E-mails cadastrados:</p>
+      {emails.length === 0 && <p style={{ fontSize: 12, color: "#aaa", margin: "0 0 8px" }}>Nenhum e-mail cadastrado.</p>}
+      {emails.map((e, i) => (
+        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: "#f5f5f5", borderRadius: 6, marginBottom: 6 }}>
+          <span style={{ fontSize: 13 }}>{e}</span>
+          <button style={{ ...s({ fontSize: 11, padding: "2px 8px", color: "red" }) }} onClick={() => setEmails(prev => prev.filter((_, j) => j !== i))}>✕</button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 8, marginTop: 8, marginBottom: 16 }}>
+        <input placeholder="email@empresa.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} onKeyDown={e => e.key === "Enter" && add()}
+          style={{ flex: 1, padding: "8px 12px", borderRadius: "8px", border: "0.5px solid #ccc", fontSize: 13 }} />
+        <button style={sp({ padding: "8px 14px" })} onClick={add}>+ Add</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button style={s()} onClick={onClose}>Cancelar</button>
+        <button style={sp()} onClick={() => onSave(emails)}>Salvar</button>
       </div>
     </Modal>
   );
 }
 
 const defaultObras = [{
-  id: "demo-obra", nome: "Obra Demo — Torre Jardins",
+  id: "demo-obra", nome: "Obra Demo — Torre Jardins", notifEmails: [],
   disciplinas: [
     { id: "estrutura", nome: "Estrutura", icone: "🏗️", pdfUrl: "", pdfName: "", updatedAt: null, historico: [] },
     { id: "eletrica", nome: "Elétrica", icone: "⚡", pdfUrl: "", pdfName: "", updatedAt: null, historico: [] },
@@ -193,6 +261,7 @@ export default function App() {
   const [showQR, setShowQR] = useState<string | null>(null);
   const [showGeralQR, setShowGeralQR] = useState(false);
   const [historicoDisc, setHistoricoDisc] = useState<string | null>(null);
+  const [showNotifModal, setShowNotifModal] = useState(false);
   const [addDiscModal, setAddDiscModal] = useState(false);
   const [addObraModal, setAddObraModal] = useState(false);
   const [newNome, setNewNome] = useState(""), [newIcone, setNewIcone] = useState("📋");
@@ -210,7 +279,7 @@ export default function App() {
 
   useDeepLink(obras, setScreen, setObraId, setDiscId);
 
-  const upd = (fn: (prev: any[]) => any[]) => setObras(prev => { const next = fn(prev); sbSet(next).catch(console.error); return next; });
+  const upd = (fn: (p: any[]) => any[]) => setObras(prev => { const next = fn(prev); sbSet(next).catch(console.error); return next; });
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -218,12 +287,17 @@ export default function App() {
     setUploading(true);
     try {
       const url = await uploadPDF(file, obraId, activeUpload);
-      upd(prev => prev.map(o => o.id !== obraId ? o : {
-        ...o, disciplinas: o.disciplinas.map((d: any) => {
-          if (d.id !== activeUpload) return d;
-          const hist = d.pdfUrl ? [...(d.historico || []), { pdfUrl: d.pdfUrl, pdfName: d.pdfName, updatedAt: d.updatedAt }] : (d.historico || []);
-          return { ...d, pdfUrl: url, pdfName: file.name, updatedAt: new Date().toLocaleString("pt-BR"), historico: hist };
-        })
+      upd(prev => prev.map(o => {
+        if (o.id !== obraId) return o;
+        const disc = o.disciplinas.find((d: any) => d.id === activeUpload);
+        if (disc) scheduleNotification(obraId, o.nome, o.notifEmails || [], { icone: disc.icone, nome: disc.nome });
+        return {
+          ...o, disciplinas: o.disciplinas.map((d: any) => {
+            if (d.id !== activeUpload) return d;
+            const hist = d.pdfUrl ? [...(d.historico || []), { pdfUrl: d.pdfUrl, pdfName: d.pdfName, updatedAt: d.updatedAt }] : (d.historico || []);
+            return { ...d, pdfUrl: url, pdfName: file.name, updatedAt: new Date().toLocaleString("pt-BR"), historico: hist };
+          })
+        };
       }));
     } catch { alert("Erro ao fazer upload. Tente novamente."); }
     finally { setUploading(false); setActiveUpload(null); e.target.value = ""; }
@@ -244,8 +318,16 @@ export default function App() {
     setNewNome(""); setNewIcone("📋"); setAddDiscModal(false);
   };
   const removeDisc = (id: string) => upd(prev => prev.map(o => o.id !== obraId ? o : { ...o, disciplinas: o.disciplinas.filter((d: any) => d.id !== id) }));
-  const addObra = () => { if (!newObraNome.trim()) return; upd(prev => [...prev, { id: "obra-" + Date.now(), nome: newObraNome, disciplinas: [] }]); setNewObraNome(""); setAddObraModal(false); };
+  const addObra = () => {
+    if (!newObraNome.trim()) return;
+    upd(prev => [...prev, { id: "obra-" + Date.now(), nome: newObraNome, notifEmails: [], disciplinas: [] }]);
+    setNewObraNome(""); setAddObraModal(false);
+  };
   const removeObra = (id: string) => upd(prev => prev.filter(o => o.id !== id));
+  const saveNotifEmails = (emails: string[]) => {
+    upd(prev => prev.map(o => o.id !== obraId ? o : { ...o, notifEmails: emails }));
+    setShowNotifModal(false);
+  };
 
   if (loading) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "sans-serif" }}>
@@ -253,7 +335,7 @@ export default function App() {
     </div>
   );
 
-  // ── DISCIPLINA ──
+  // DISCIPLINA
   if (screen === "disciplina" && obra) {
     const d = obra.disciplinas.find((x: any) => x.id === discId);
     if (!d) { setScreen("obra"); return null; }
@@ -261,16 +343,16 @@ export default function App() {
       <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "2rem", gap: "1.2rem", textAlign: "center", fontFamily: "sans-serif" }}>
         <span style={{ fontSize: 56 }}>{d.icone}</span>
         <div><p style={{ margin: "0 0 2px", fontSize: 12, color: "#666" }}>{obra.nome}</p><h2 style={{ margin: 0, fontSize: 22, fontWeight: 500 }}>{d.nome}</h2></div>
-        {d.pdfUrl
-          ? <><p style={{ margin: 0, fontSize: 12, color: "#666" }}>{d.pdfName} · {d.updatedAt}</p>
-            <a href={d.pdfUrl} target="_blank" rel="noreferrer" style={{ padding: "12px 32px", background: "#111", color: "#fff", borderRadius: "12px", textDecoration: "none", fontWeight: 500, fontSize: 15 }}>Abrir Projeto PDF</a></>
-          : <p style={{ color: "#666", fontSize: 14 }}>Nenhum projeto cadastrado.</p>}
+        {d.pdfUrl ? <>
+          <p style={{ margin: 0, fontSize: 12, color: "#666" }}>{d.pdfName} · {d.updatedAt}</p>
+          <a href={d.pdfUrl} target="_blank" rel="noreferrer" style={{ padding: "12px 32px", background: "#111", color: "#fff", borderRadius: "12px", textDecoration: "none", fontWeight: 500, fontSize: 15 }}>Abrir Projeto PDF</a>
+        </> : <p style={{ color: "#666", fontSize: 14 }}>Nenhum projeto cadastrado.</p>}
         <button style={s({ marginTop: 4 })} onClick={() => setScreen("obra")}>← Voltar</button>
       </div>
     );
   }
 
-  // ── OBRA ──
+  // OBRA
   if (screen === "obra" && obra) {
     return (
       <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
@@ -301,7 +383,7 @@ export default function App() {
     );
   }
 
-  // ── PM ──
+  // PM
   if (screen === "pm" && obra) {
     const disc = historicoDisc ? obra.disciplinas.find((d: any) => d.id === historicoDisc) : null;
     return (
@@ -313,13 +395,14 @@ export default function App() {
             <h1 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>PM / Arquiteto</h1>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={s()} onClick={() => printQRSheet(obra)}>🖨️ Imprimir QR Codes</button>
+            <button style={s()} onClick={() => setShowNotifModal(true)}>🔔 Notificações {obra.notifEmails?.length > 0 ? `(${obra.notifEmails.length})` : ""}</button>
+            <button style={s()} onClick={() => printQRSheet(obra)}>🖨️ Imprimir QR</button>
             <button style={s()} onClick={() => setAddDiscModal(true)}>+ Disciplina</button>
             <button style={s({ color: "#666" })} onClick={goHome}>Sair</button>
           </div>
         </div>
 
-        {/* QR Geral da Obra */}
+        {/* QR Geral */}
         <div style={{ background: "#fff", border: "2px solid #111", borderRadius: "12px", padding: "1rem 1.25rem", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 26 }}>🏢</span>
@@ -327,21 +410,26 @@ export default function App() {
               <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>QR Geral — {obra.nome}</p>
               <p style={{ margin: 0, fontSize: 11, color: "#666" }}>Mostra todas as disciplinas da obra</p>
             </div>
-            <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => setShowGeralQR(!showGeralQR)}>
-              {showGeralQR ? "Fechar QR" : "Ver QR Geral"}
-            </button>
+            <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => setShowGeralQR(!showGeralQR)}>{showGeralQR ? "Fechar" : "Ver QR Geral"}</button>
           </div>
           {showGeralQR && (
             <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "0.5px solid #eee", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
               <QRCodeImg value={`${APP_URL}/?obra=${obraId}`} size={140} />
               <div>
                 <p style={{ margin: "0 0 4px", fontWeight: 500, fontSize: 13 }}>Aponte a câmera para escanear</p>
-                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#666" }}>Abre a lista completa de disciplinas desta obra.</p>
+                <p style={{ margin: "0 0 8px", fontSize: 12, color: "#666" }}>Abre a lista completa de disciplinas.</p>
                 <p style={{ margin: 0, fontSize: 10, fontFamily: "monospace", color: "#aaa", background: "#f5f5f5", padding: "4px 8px", borderRadius: 4 }}>{APP_URL}/?obra={obraId}</p>
               </div>
             </div>
           )}
         </div>
+
+        {/* Notif info */}
+        {obra.notifEmails?.length > 0 && (
+          <div style={{ background: "#f0fdf4", border: "0.5px solid #16a34a", borderRadius: 8, padding: "8px 14px", marginBottom: 12, fontSize: 12, color: "#166534" }}>
+            🔔 Notificações ativas para {obra.notifEmails.length} e-mail{obra.notifEmails.length !== 1 ? "s" : ""} + WhatsApp. Agrupadas a cada 3 horas.
+          </div>
+        )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {obra.disciplinas.map((d: any) => (
@@ -352,12 +440,12 @@ export default function App() {
                   <p style={{ margin: 0, fontWeight: 500, fontSize: 14 }}>{d.nome}</p>
                   <p style={{ margin: 0, fontSize: 11, color: "#666" }}>
                     {d.pdfName ? `${d.pdfName} · ${d.updatedAt}` : "Sem PDF"}
-                    {d.historico && d.historico.length > 0 && <span style={{ color: "#aaa" }}> · {d.historico.length} versão(ões) anterior(es)</span>}
+                    {d.historico?.length > 0 && <span style={{ color: "#aaa" }}> · {d.historico.length} versão(ões) anterior(es)</span>}
                   </p>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => triggerUpload(d.id)} disabled={uploading}>
-                    {uploading && activeUpload === d.id ? "Enviando..." : d.pdfUrl ? "Atualizar PDF" : "Upload PDF"}
+                    {uploading && activeUpload === d.id ? "⏳ Enviando..." : d.pdfUrl ? "Atualizar PDF" : "Upload PDF"}
                   </button>
                   <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => setHistoricoDisc(d.id)}>Histórico</button>
                   <button style={s({ fontSize: 12, padding: "5px 12px" })} onClick={() => setShowQR(showQR === d.id ? null : d.id)}>QR Code</button>
@@ -369,7 +457,6 @@ export default function App() {
                   <QRCodeImg value={`${APP_URL}/?obra=${obraId}&disc=${d.id}`} size={140} />
                   <div>
                     <p style={{ margin: "0 0 4px", fontWeight: 500, fontSize: 13 }}>{obra.nome} — {d.nome}</p>
-                    <p style={{ margin: "0 0 4px", fontSize: 12, color: "#666" }}>Aponte a câmera para escanear.</p>
                     <p style={{ margin: "0 0 8px", fontSize: 12, color: "#666" }}>QR code permanente. Nunca muda.</p>
                     <p style={{ margin: 0, fontSize: 10, fontFamily: "monospace", color: "#aaa", background: "#f5f5f5", padding: "4px 8px", borderRadius: 4 }}>{APP_URL}/?obra={obraId}&disc={d.id}</p>
                   </div>
@@ -381,13 +468,12 @@ export default function App() {
         </div>
 
         {disc && <HistoricoModal disc={disc} onClose={() => setHistoricoDisc(null)} />}
+        {showNotifModal && <NotifModal obra={obra} onSave={saveNotifEmails} onClose={() => setShowNotifModal(false)} />}
         {addDiscModal && (
           <Modal title="Nova Disciplina">
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              <input value={newIcone} onChange={e => setNewIcone(e.target.value)}
-                style={{ width: 46, textAlign: "center", fontSize: 20, borderRadius: "8px", border: "0.5px solid #ccc", padding: "6px" }} />
-              <input placeholder="Nome" value={newNome} onChange={e => setNewNome(e.target.value)} onKeyDown={e => e.key === "Enter" && addDisc()}
-                style={{ flex: 1, padding: "8px 12px", borderRadius: "8px", border: "0.5px solid #ccc", fontSize: 14 }} />
+              <input value={newIcone} onChange={e => setNewIcone(e.target.value)} style={{ width: 46, textAlign: "center", fontSize: 20, borderRadius: "8px", border: "0.5px solid #ccc", padding: "6px" }} />
+              <input placeholder="Nome" value={newNome} onChange={e => setNewNome(e.target.value)} onKeyDown={e => e.key === "Enter" && addDisc()} style={{ flex: 1, padding: "8px 12px", borderRadius: "8px", border: "0.5px solid #ccc", fontSize: 14 }} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button style={s()} onClick={() => setAddDiscModal(false)}>Cancelar</button>
@@ -399,7 +485,7 @@ export default function App() {
     );
   }
 
-  // ── COMPRAS ──
+  // COMPRAS
   if (screen === "compras") {
     return (
       <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
@@ -411,7 +497,7 @@ export default function App() {
           <div key={o.id} style={{ marginBottom: "1.5rem" }}>
             <p style={{ margin: "0 0 8px", fontWeight: 500, fontSize: 14 }}>🏢 {o.nome}</p>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {o.disciplinas.length === 0 && <p style={{ fontSize: 12, color: "#aaa", margin: 0 }}>Sem disciplinas.</p>}
+              {!o.disciplinas.length && <p style={{ fontSize: 12, color: "#aaa", margin: 0 }}>Sem disciplinas.</p>}
               {o.disciplinas.map((d: any) => (
                 <div key={d.id} style={{ background: "#fff", border: "0.5px solid #ddd", borderRadius: "8px", padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 20 }}>{d.icone}</span>
@@ -426,7 +512,7 @@ export default function App() {
     );
   }
 
-  // ── HOME ──
+  // HOME
   return (
     <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem", flexWrap: "wrap", gap: 8 }}>
@@ -448,7 +534,7 @@ export default function App() {
             </div>
           </div>
         ))}
-        {obras.length === 0 && <p style={{ color: "#666", fontSize: 13 }}>Nenhuma obra cadastrada.</p>}
+        {!obras.length && <p style={{ color: "#666", fontSize: 13 }}>Nenhuma obra cadastrada.</p>}
       </div>
       {loginFor && <LoginModal title={loginFor === "pm" ? "PM / Arquiteto" : "Compras & Orçamentos"} onLogin={doLogin} onClose={() => setLoginFor(null)} />}
       {addObraModal && (
