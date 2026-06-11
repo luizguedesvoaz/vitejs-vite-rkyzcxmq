@@ -55,7 +55,7 @@ function scheduleNotification(obraId: string, obraNome: string, emails: string[]
   }
   pendingMap[obraId].timer = setTimeout(() => {
     fireNotification(obraId);
-  }, 3 * 60 * 60 * 1000); // 3 horas
+  }, 1 * 60 * 1000); // 1 minuto (TESTE)
 }
 
 async function fireNotification(obraId: string) {
