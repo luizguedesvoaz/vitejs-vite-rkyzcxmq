@@ -397,7 +397,7 @@ export default function App() {
               const waMsg = encodeURIComponent(`📦 *VOAZ Obras — TESTE*\n\n🏢 Obra: ${o.nome}\n🕐 ${new Date().toLocaleString("pt-BR")}\n\n🔗 ${APP_URL}/?obra=${obraId}`);
               await fetch(`https://api.callmebot.com/whatsapp.php?phone=${WA_PHONE}&text=${waMsg}&apikey=${WA_APIKEY}`);
               for (const email of emails) {
-                await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+                const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
@@ -405,8 +405,9 @@ export default function App() {
                     template_params: { to_email: email, obra_nome: o.nome, data_hora: new Date().toLocaleString("pt-BR"), count: "1", disc_list: "🧪 Teste de notificação", obra_url: `${APP_URL}/?obra=${obraId}` }
                   })
                 });
+                const txt = await res.text();
+                alert(`Email para ${email}\nStatus: ${res.status}\nResposta: ${txt}`);
               }
-              alert("Notificações disparadas! Verifique WhatsApp e e-mail.");
             }}>🧪 Testar Notif</button>
             <button style={s()} onClick={() => printQRSheet(obra)}>🖨️ Imprimir QR</button>
             <button style={s()} onClick={() => setAddDiscModal(true)}>+ Disciplina</button>
