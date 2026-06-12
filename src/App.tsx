@@ -43,40 +43,35 @@ async function uploadPDF(file: File, obraId: string, discId: string): Promise<st
   return `${SB_URL}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
-// ── Notificações ─────────────────────────────────────────────
-// Fila de atualizações pendentes { obraId, obraNome, discs: [{icone, nome}], timer }
-const pendingMap: Record<string, { obraNome: string; emails: string[]; discs: {icone:string;nome:string}[]; timer: any }> = {};
-
-function scheduleNotification(obraId: string, obraNome: string, emails: string[], disc: {icone:string;nome:string}) {
-  if (pendingMap[obraId]) {
-    clearTimeout(pendingMap[obraId].timer);
-    pendingMap[obraId].discs.push(disc);
-  } else {
-    pendingMap[obraId] = { obraNome, emails, discs: [disc], timer: null };
-  }
-  pendingMap[obraId].timer = setTimeout(async () => {
-    const p = pendingMap[obraId];
-    if (!p) return;
-    delete pendingMap[obraId];
-    await sendNotification(obraId, p.obraNome, p.emails, p.discs);
-  }, 3 * 60 * 60 * 1000); // 3 horas
-}
-
-async function sendNotification(obraId: string, obraNome: string, emails: string[], discs: {icone:string;nome:string}[]) {
-  const now = new Date().toLocaleString("pt-BR");
-  const count = discs.length;
-  const discList = discs.map(d => `${d.icone} ${d.nome}`).join("\n");
-  const obraUrl = `${APP_URL}/?obra=${obraId}`;
-  const waMsg = `📦 *VOAZ Obras — Pacote de Atualizações*\n\n🏢 Obra: ${obraNome}\n🕐 ${now} — ${count} projeto${count!==1?"s":""} atualizado${count!==1?"s":""}:\n\n${discList}\n\n🔗 Acesse: ${obraUrl}`;
-  await fetch("/api/notify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      waPhone: WA_PHONE, waApikey: WA_APIKEY, waMsg,
-      emails, emailService: EMAILJS_SERVICE, emailTemplate: EMAILJS_TEMPLATE, emailPubkey: EMAILJS_PUBKEY,
-      templateParams: { obra_nome: obraNome, data_hora: now, count: String(count), disc_list: discs.map(d=>`${d.icone} ${d.nome}`).join(" | "), obra_url: obraUrl }
-    })
-  });
+// ── Notificações — salva no Supabase, cron dispara ───────────
+async function scheduleNotification(obraId: string, obraNome: string, emails: string[], disc: {icone:string;nome:string}) {
+  try {
+    const r = await fetch(`${SB_URL}/rest/v1/pendencias?obra_id=eq.${obraId}&select=*`, {
+      headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` }
+    });
+    const existing = await r.json();
+    if (existing?.length) {
+      const discs = JSON.parse(existing[0].discs || "[]");
+      discs.push(disc);
+      await fetch(`${SB_URL}/rest/v1/pendencias?id=eq.${existing[0].id}`, {
+        method: "PATCH",
+        headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ discs: JSON.stringify(discs) })
+      });
+    } else {
+      await fetch(`${SB_URL}/rest/v1/pendencias`, {
+        method: "POST",
+        headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({
+          obra_id: obraId,
+          obra_nome: obraNome,
+          emails: JSON.stringify(emails),
+          discs: JSON.stringify([disc]),
+          criado_em: new Date().toISOString()
+        })
+      });
+    }
+  } catch(e) { console.error("Erro ao salvar pendência:", e); }
 }
 
 // ── QR Code ──────────────────────────────────────────────────
@@ -173,7 +168,6 @@ function HistoricoModal({ disc, onClose }: any) {
   );
 }
 
-// Modal de configuração de notificações da obra
 function NotifModal({ obra, onSave, onClose }: { obra: any; onSave: (emails: string[]) => void; onClose: () => void }) {
   const [emailInput, setEmailInput] = useState("");
   const [emails, setEmails] = useState<string[]>(obra.notifEmails || []);
@@ -186,7 +180,7 @@ function NotifModal({ obra, onSave, onClose }: { obra: any; onSave: (emails: str
   return (
     <Modal title={`🔔 Notificações — ${obra.nome}`}>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: "#666" }}>
-        Quando um PDF for atualizado, um resumo será enviado por WhatsApp e e-mail após 3 horas — agrupando todas as atualizações do período.
+        Quando um PDF for atualizado, um resumo será enviado por WhatsApp e e-mail na próxima hora — agrupando todas as atualizações do período.
       </p>
       <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 500 }}>E-mails cadastrados:</p>
       {emails.length === 0 && <p style={{ fontSize: 12, color: "#aaa", margin: "0 0 8px" }}>Nenhum e-mail cadastrado.</p>}
@@ -304,7 +298,6 @@ export default function App() {
     </div>
   );
 
-  // DISCIPLINA
   if (screen === "disciplina" && obra) {
     const d = obra.disciplinas.find((x: any) => x.id === discId);
     if (!d) { setScreen("obra"); return null; }
@@ -321,7 +314,6 @@ export default function App() {
     );
   }
 
-  // OBRA
   if (screen === "obra" && obra) {
     return (
       <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
@@ -352,7 +344,6 @@ export default function App() {
     );
   }
 
-  // PM
   if (screen === "pm" && obra) {
     const disc = historicoDisc ? obra.disciplinas.find((d: any) => d.id === historicoDisc) : null;
     return (
@@ -366,30 +357,16 @@ export default function App() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button style={s()} onClick={() => setShowNotifModal(true)}>🔔 Notificações {obra.notifEmails?.length > 0 ? `(${obra.notifEmails.length})` : ""}</button>
             <button style={s({background:"#fef9c3"})} onClick={async () => {
-              const dados = await sbGet();
-              const o = dados?.find((x: any) => x.id === obraId);
-              const emails = o?.notifEmails || [];
-              alert(`E-mails: ${emails.length}\n${emails.join(", ")}`);
-              const res = await fetch("/api/notify", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  waPhone: WA_PHONE, waApikey: WA_APIKEY,
-                  waMsg: `📦 *VOAZ Obras — TESTE*\n\n🏢 ${o?.nome}\n🕐 ${new Date().toLocaleString("pt-BR")}\n\n🔗 ${APP_URL}/?obra=${obraId}`,
-                  emails, emailService: EMAILJS_SERVICE, emailTemplate: EMAILJS_TEMPLATE, emailPubkey: EMAILJS_PUBKEY,
-                  templateParams: { obra_nome: o?.nome, data_hora: new Date().toLocaleString("pt-BR"), count: "1", disc_list: "🧪 Teste", obra_url: `${APP_URL}/?obra=${obraId}` }
-                })
-              });
+              const res = await fetch("/api/cron", { method: "POST" });
               const result = await res.json();
-              alert(`WhatsApp: ${result.whatsapp}\nEmails: ${JSON.stringify(result.emails)}`);
-            }}>🧪 Testar Notif</button>
+              alert(`Cron executado!\n${JSON.stringify(result, null, 2)}`);
+            }}>🧪 Testar Cron</button>
             <button style={s()} onClick={() => printQRSheet(obra)}>🖨️ Imprimir QR</button>
             <button style={s()} onClick={() => setAddDiscModal(true)}>+ Disciplina</button>
             <button style={s({ color: "#666" })} onClick={goHome}>Sair</button>
           </div>
         </div>
 
-        {/* QR Geral */}
         <div style={{ background: "#fff", border: "2px solid #111", borderRadius: "12px", padding: "1rem 1.25rem", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 26 }}>🏢</span>
@@ -411,10 +388,9 @@ export default function App() {
           )}
         </div>
 
-        {/* Notif info */}
         {obra.notifEmails?.length > 0 && (
           <div style={{ background: "#f0fdf4", border: "0.5px solid #16a34a", borderRadius: 8, padding: "8px 14px", marginBottom: 12, fontSize: 12, color: "#166534" }}>
-            🔔 Notificações ativas para {obra.notifEmails.length} e-mail{obra.notifEmails.length !== 1 ? "s" : ""} + WhatsApp. Agrupadas a cada 3 horas.
+            🔔 Notificações ativas para {obra.notifEmails.length} e-mail{obra.notifEmails.length !== 1 ? "s" : ""} + WhatsApp. Enviadas a cada 1 hora.
           </div>
         )}
 
@@ -472,7 +448,6 @@ export default function App() {
     );
   }
 
-  // COMPRAS
   if (screen === "compras") {
     return (
       <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
@@ -499,7 +474,6 @@ export default function App() {
     );
   }
 
-  // HOME
   return (
     <div style={{ padding: "1.5rem", fontFamily: "sans-serif", maxWidth: 700, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem", flexWrap: "wrap", gap: 8 }}>
