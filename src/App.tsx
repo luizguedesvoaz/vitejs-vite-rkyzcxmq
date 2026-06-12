@@ -389,6 +389,25 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button style={s()} onClick={() => setShowNotifModal(true)}>🔔 Notificações {obra.notifEmails?.length > 0 ? `(${obra.notifEmails.length})` : ""}</button>
+            <button style={s({background:"#fef9c3"})} onClick={async () => {
+              const o = obras.find(x => x.id === obraId);
+              if (!o) return;
+              // dispara imediatamente sem timer
+              const emails = o.notifEmails || [];
+              const waMsg = encodeURIComponent(`📦 *VOAZ Obras — TESTE*\n\n🏢 Obra: ${o.nome}\n🕐 ${new Date().toLocaleString("pt-BR")}\n\n🔗 ${APP_URL}/?obra=${obraId}`);
+              await fetch(`https://api.callmebot.com/whatsapp.php?phone=${WA_PHONE}&text=${waMsg}&apikey=${WA_APIKEY}`);
+              for (const email of emails) {
+                await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    service_id: EMAILJS_SERVICE, template_id: EMAILJS_TEMPLATE, user_id: EMAILJS_PUBKEY,
+                    template_params: { to_email: email, obra_nome: o.nome, data_hora: new Date().toLocaleString("pt-BR"), count: "1", disc_list: "🧪 Teste de notificação", obra_url: `${APP_URL}/?obra=${obraId}` }
+                  })
+                });
+              }
+              alert("Notificações disparadas! Verifique WhatsApp e e-mail.");
+            }}>🧪 Testar Notif</button>
             <button style={s()} onClick={() => printQRSheet(obra)}>🖨️ Imprimir QR</button>
             <button style={s()} onClick={() => setAddDiscModal(true)}>+ Disciplina</button>
             <button style={s({ color: "#666" })} onClick={goHome}>Sair</button>
