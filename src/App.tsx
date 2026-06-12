@@ -2,14 +2,14 @@ import { useState, useEffect, useRef } from "react";
 
 // ── Config ───────────────────────────────────────────────────
 const SB_URL = "https://xhbalviwelidonrkoeim.supabase.co";
-const SB_KEY = import.meta.env.VITE_SB_KEY as string;
+const SB_KEY = "sb_publishable_uOQhqR6A2aH01mvqw8fswA_7ZWvx5Av";
 const ROW_ID = 1;
 const BUCKET = "projetos";
 const APP_URL = "https://voaz-projetos.vercel.app";
 const WA_PHONE = "5511994009118";
-const WA_APIKEY = import.meta.env.VITE_WA_APIKEY as string;
-const RESEND_KEY = import.meta.env.VITE_RESEND_KEY as string;
-const EMAIL_FROM = "Notificações VOAZ <luiz.guedes@voaz.com.br>";
+const WA_APIKEY = "2922050";
+const RESEND_KEY = "re_brD5Sc13_JQniaeSHu9E9EsbKXLRtHV5E";
+const EMAIL_FROM = "Notificações VOAZ <onboarding@resend.dev>";
 
 // ── Supabase ─────────────────────────────────────────────────
 async function sbGet() {
@@ -55,7 +55,7 @@ function scheduleNotification(obraId: string, obraNome: string, emails: string[]
   }
   pendingMap[obraId].timer = setTimeout(() => {
     fireNotification(obraId);
-  }, 1 * 60 * 1000); // 1 minuto (TESTE)
+  }, 3 * 60 * 60 * 1000); // 3 horas
 }
 
 async function fireNotification(obraId: string) {
@@ -79,34 +79,27 @@ async function fireNotification(obraId: string) {
   );
   fetch(`https://api.callmebot.com/whatsapp.php?phone=${WA_PHONE}&text=${waMsg}&apikey=${WA_APIKEY}`).catch(() => {});
 
-  // Email
+  // Email via EmailJS
   if (p.emails.length > 0) {
-    const html = `
-      <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:24px;">
-        <div style="background:#111;color:#fff;padding:16px 20px;border-radius:10px 10px 0 0;">
-          <h2 style="margin:0;font-size:16px;">📦 Pacote de Atualizações — VOAZ Obras</h2>
-        </div>
-        <div style="border:1px solid #eee;border-top:none;padding:20px;border-radius:0 0 10px 10px;">
-          <p style="margin:0 0 12px;font-size:14px;color:#333;">🏢 <strong>${p.obraNome}</strong></p>
-          <p style="margin:0 0 8px;font-size:13px;color:#666;">${now} — ${count} projeto${count !== 1 ? "s" : ""} atualizado${count !== 1 ? "s" : ""}:</p>
-          <ul style="margin:0 0 16px;padding-left:20px;font-size:14px;color:#111;">${discListHtml}</ul>
-          <a href="${obraUrl}" style="display:inline-block;padding:10px 24px;background:#111;color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;">
-            Acessar Obra
-          </a>
-          <p style="margin:16px 0 0;font-size:11px;color:#aaa;">Este e-mail foi gerado automaticamente pelo VOAZ Obras.</p>
-        </div>
-      </div>`;
-
-    fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: EMAIL_FROM,
-        to: p.emails,
-        subject: `📦 ${count} projeto${count !== 1 ? "s" : ""} atualizado${count !== 1 ? "s" : ""} — ${p.obraNome}`,
-        html
-      })
-    }).catch(() => {});
+    for (const email of p.emails) {
+      fetch("https://api.emailjs.com/api/v1.0/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service_id:  EMAILJS_SERVICE,
+          template_id: EMAILJS_TEMPLATE,
+          user_id:     EMAILJS_PUBKEY,
+          template_params: {
+            to_email:  email,
+            obra_nome: p.obraNome,
+            data_hora: new Date().toLocaleString("pt-BR"),
+            count:     String(p.discs.length),
+            disc_list: p.discs.map(d => `${d.icone} ${d.nome}`).join(" | "),
+            obra_url:  `${APP_URL}/?obra=${obraId}`,
+          }
+        })
+      }).catch(() => {});
+    }
   }
 }
 
