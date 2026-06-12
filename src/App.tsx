@@ -54,54 +54,29 @@ function scheduleNotification(obraId: string, obraNome: string, emails: string[]
   } else {
     pendingMap[obraId] = { obraNome, emails, discs: [disc], timer: null };
   }
-  pendingMap[obraId].timer = setTimeout(() => {
-    fireNotification(obraId);
+  pendingMap[obraId].timer = setTimeout(async () => {
+    const p = pendingMap[obraId];
+    if (!p) return;
+    delete pendingMap[obraId];
+    await sendNotification(obraId, p.obraNome, p.emails, p.discs);
   }, 3 * 60 * 60 * 1000); // 3 horas
 }
 
-async function fireNotification(obraId: string) {
-  const p = pendingMap[obraId];
-  if (!p) return;
-  delete pendingMap[obraId];
-
-  const discList = p.discs.map(d => `${d.icone} ${d.nome}`).join("\n");
-  const discListHtml = p.discs.map(d => `<li style="margin:4px 0;">${d.icone} <strong>${d.nome}</strong></li>`).join("");
-  const obraUrl = `${APP_URL}/?obra=${obraId}`;
-  const count = p.discs.length;
+async function sendNotification(obraId: string, obraNome: string, emails: string[], discs: {icone:string;nome:string}[]) {
   const now = new Date().toLocaleString("pt-BR");
-
-  // WhatsApp
-  const waMsg = encodeURIComponent(
-    `📦 *VOAZ Obras — Pacote de Atualizações*\n\n` +
-    `🏢 Obra: ${p.obraNome}\n` +
-    `🕐 ${now} — ${count} projeto${count !== 1 ? "s" : ""} atualizado${count !== 1 ? "s" : ""}:\n\n` +
-    `${discList}\n\n` +
-    `🔗 Acesse: ${obraUrl}`
-  );
-  fetch(`https://api.callmebot.com/whatsapp.php?phone=${WA_PHONE}&text=${waMsg}&apikey=${WA_APIKEY}`).catch(() => {});
-
-  // Email via EmailJS
-  if (p.emails.length > 0) {
-    for (const email of p.emails) {
-      fetch("https://api.emailjs.com/api/v1.0/email/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          service_id:  EMAILJS_SERVICE,
-          template_id: EMAILJS_TEMPLATE,
-          user_id:     EMAILJS_PUBKEY,
-          template_params: {
-            to_email:  email,
-            obra_nome: p.obraNome,
-            data_hora: new Date().toLocaleString("pt-BR"),
-            count:     String(p.discs.length),
-            disc_list: p.discs.map(d => `${d.icone} ${d.nome}`).join(" | "),
-            obra_url:  `${APP_URL}/?obra=${obraId}`,
-          }
-        })
-      }).catch(() => {});
-    }
-  }
+  const count = discs.length;
+  const discList = discs.map(d => `${d.icone} ${d.nome}`).join("\n");
+  const obraUrl = `${APP_URL}/?obra=${obraId}`;
+  const waMsg = `📦 *VOAZ Obras — Pacote de Atualizações*\n\n🏢 Obra: ${obraNome}\n🕐 ${now} — ${count} projeto${count!==1?"s":""} atualizado${count!==1?"s":""}:\n\n${discList}\n\n🔗 Acesse: ${obraUrl}`;
+  await fetch("/api/notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      waPhone: WA_PHONE, waApikey: WA_APIKEY, waMsg,
+      emails, emailService: EMAILJS_SERVICE, emailTemplate: EMAILJS_TEMPLATE, emailPubkey: EMAILJS_PUBKEY,
+      templateParams: { obra_nome: obraNome, data_hora: now, count: String(count), disc_list: discs.map(d=>`${d.icone} ${d.nome}`).join(" | "), obra_url: obraUrl }
+    })
+  });
 }
 
 // ── QR Code ──────────────────────────────────────────────────
@@ -394,29 +369,19 @@ export default function App() {
               const dados = await sbGet();
               const o = dados?.find((x: any) => x.id === obraId);
               const emails = o?.notifEmails || [];
-              alert(`E-mails encontrados: ${emails.length}\n${emails.join(", ")}`);
-              const waMsg = encodeURIComponent(`📦 *VOAZ Obras — TESTE*\n\n🏢 Obra: ${o?.nome}\n🕐 ${new Date().toLocaleString("pt-BR")}\n\n🔗 ${APP_URL}/?obra=${obraId}`);
-              await fetch(`https://api.callmebot.com/whatsapp.php?phone=${WA_PHONE}&text=${waMsg}&apikey=${WA_APIKEY}`);
-              for (const email of emails) {
-                try {
-                  const result = await (window as any).emailjs.send(
-                    EMAILJS_SERVICE,
-                    EMAILJS_TEMPLATE,
-                    {
-                      to_email:  email,
-                      obra_nome: o?.nome,
-                      data_hora: new Date().toLocaleString("pt-BR"),
-                      count:     "1",
-                      disc_list: "🧪 Teste de notificação",
-                      obra_url:  `${APP_URL}/?obra=${obraId}`,
-                    },
-                    EMAILJS_PUBKEY
-                  );
-                  alert(`Email: ${email}\nStatus: ${result.status}\nTexto: ${result.text}`);
-                } catch(err: any) {
-                  alert(`ERRO no email ${email}:\n${JSON.stringify(err)}`);
-                }
-              }
+              alert(`E-mails: ${emails.length}\n${emails.join(", ")}`);
+              const res = await fetch("/api/notify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  waPhone: WA_PHONE, waApikey: WA_APIKEY,
+                  waMsg: `📦 *VOAZ Obras — TESTE*\n\n🏢 ${o?.nome}\n🕐 ${new Date().toLocaleString("pt-BR")}\n\n🔗 ${APP_URL}/?obra=${obraId}`,
+                  emails, emailService: EMAILJS_SERVICE, emailTemplate: EMAILJS_TEMPLATE, emailPubkey: EMAILJS_PUBKEY,
+                  templateParams: { obra_nome: o?.nome, data_hora: new Date().toLocaleString("pt-BR"), count: "1", disc_list: "🧪 Teste", obra_url: `${APP_URL}/?obra=${obraId}` }
+                })
+              });
+              const result = await res.json();
+              alert(`WhatsApp: ${result.whatsapp}\nEmails: ${JSON.stringify(result.emails)}`);
             }}>🧪 Testar Notif</button>
             <button style={s()} onClick={() => printQRSheet(obra)}>🖨️ Imprimir QR</button>
             <button style={s()} onClick={() => setAddDiscModal(true)}>+ Disciplina</button>
