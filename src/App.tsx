@@ -9,7 +9,7 @@ const APP_URL = "https://voaz-projetos.vercel.app";
 const WA_PHONE = "5511994009118";
 const WA_APIKEY = import.meta.env.VITE_WA_APIKEY as string;
 const RESEND_KEY = import.meta.env.VITE_RESEND_KEY as string;
-const EMAIL_FROM = "Notificações VOAZ <onboarding@resend.dev>";
+const EMAIL_FROM = "Notificações VOAZ <luiz.guedes@voaz.com.br>";
 
 // ── Supabase ─────────────────────────────────────────────────
 async function sbGet() {
